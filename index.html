@@ -75,7 +75,6 @@
       cursor: pointer;
     }
     
-    /* Telemetry Grid */
     .telemetry-grid {
       display: grid;
       grid-template-columns: repeat(4, 1fr);
@@ -103,7 +102,6 @@
       margin-top: 2px;
     }
 
-    /* Overspeed & Weather Controls */
     .control-strip {
       background: var(--card);
       border: 1px solid var(--border);
@@ -129,6 +127,16 @@
       text-align: center;
       padding: 4px;
       outline: none;
+    }
+    .btn-reset-odo {
+      background: #30363d;
+      color: #fff;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 4px 8px;
+      font-size: 0.72rem;
+      font-weight: 600;
+      cursor: pointer;
     }
 
     .search-container {
@@ -271,13 +279,14 @@
     </div>
   </div>
 
-  <!-- Overspeed Limit & Weather Strip -->
+  <!-- Overspeed Limit, Odometer Reset & Weather Strip -->
   <div class="control-strip">
     <div class="limit-control">
-      <span>Speed Limit:</span>
+      <span>Limit:</span>
       <input type="number" id="speedLimitInput" class="limit-input" value="60" min="20" max="140" onchange="updateLimit()">
       <span>km/h</span>
     </div>
+    <button class="btn-reset-odo" onclick="resetTripOdo()">Reset Trip A</button>
     <div>Weather: <b id="weatherTemp">--</b>°C</div>
   </div>
 
@@ -306,7 +315,7 @@
   </div>
 
   <div class="card">
-    <div class="nav-instruction" id="turnText">Speedo Idle Mode (Ride Safe)</div>
+    <div class="nav-instruction" id="turnText">Speedo & ODO Rotation Active</div>
     <div class="nav-meta">
       Next Turn: <b id="distText">-- m</b> | Remaining: <b id="remDistText">-- km</b>
     </div>
@@ -330,6 +339,12 @@
     if (!isNaN(val) && val > 0) {
       speedLimitKmh = val;
       evaluateNavigation(true);
+    }
+  }
+
+  function resetTripOdo() {
+    if (confirm("Reset Trip A Odometer to 0.0 km?")) {
+      writeBLE("RST,TRIP\n");
     }
   }
 
@@ -638,7 +653,7 @@
     btn.textContent = "Start Navigation";
     btn.className = "start-nav";
     btn.onclick = startNavigation;
-    document.getElementById("turnText").textContent = "Speedo Idle Mode (Ride Safe)";
+    document.getElementById("turnText").textContent = "Speedo & ODO Rotation Active";
 
     document.getElementById("gpxRow").style.display = "flex";
 
@@ -658,6 +673,10 @@
     document.getElementById("remDistText").textContent = "-- km";
   }
 
+  let lastGpsLat = null;
+  let lastGpsLon = null;
+  let lastGpsTime = null;
+
   function startGpsTracking() {
     if (!navigator.geolocation) return;
 
@@ -665,17 +684,39 @@
       (pos) => {
         userLat = pos.coords.latitude;
         userLon = pos.coords.longitude;
+        const currentTime = Date.now();
         
+        let calculatedSpeed = 0;
         const rawSpeed = pos.coords.speed;
-        const spd = (rawSpeed && rawSpeed > 0.5) ? Math.round(rawSpeed * 3.6) : 0;
-        updateTelemetry(spd);
+
+        if (rawSpeed !== null && !isNaN(rawSpeed) && rawSpeed > 0.2) {
+          calculatedSpeed = Math.round(rawSpeed * 3.6);
+        } else if (lastGpsLat !== null && lastGpsLon !== null && lastGpsTime !== null) {
+          const timeDeltaSec = (currentTime - lastGpsTime) / 1000.0;
+          if (timeDeltaSec >= 0.8) {
+            const distM = getDistanceMeters(lastGpsLat, lastGpsLon, userLat, userLon);
+            if (distM >= 1.2) {
+              calculatedSpeed = Math.round((distM / timeDeltaSec) * 3.6);
+              // Send distance delta to hardware odometer
+              writeBLE(`ODO,${distM.toFixed(1)}\n`);
+            }
+          }
+        }
+
+        if (lastGpsLat === null || (currentTime - lastGpsTime) >= 800) {
+          lastGpsLat = userLat;
+          lastGpsLon = userLon;
+          lastGpsTime = currentTime;
+        }
+
+        updateTelemetry(calculatedSpeed);
 
         if (isNavigating) {
           recordedGpxTrack.push({
             lat: userLat,
             lon: userLon,
             time: new Date().toISOString(),
-            speed: spd
+            speed: calculatedSpeed
           });
         }
 
@@ -703,7 +744,7 @@
         }
       },
       (err) => console.warn(err),
-      { enableHighAccuracy: true, maximumAge: 1000 }
+      { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 }
     );
   }
 
@@ -728,7 +769,6 @@
     const now = new Date();
 
     if (!isNavigating) {
-      // SPD Protocol: SPD,<speed>,<limit>,<hr>,<min>,<theme>,<temp>,<rain>
       if (forcePush && navCharacteristic) {
         const payload = `SPD,${liveSpeedKmh},${speedLimitKmh},${now.getHours()},${now.getMinutes()},${currentThemeMode},${ambientTemp},${rainActive}\n`;
         writeBLE(payload);
@@ -764,7 +804,6 @@
     document.getElementById("distText").textContent = `${distMeters} m`;
     document.getElementById("remDistText").textContent = `${remKm} km`;
 
-    // NAV Protocol: NAV,<turn>,<dist>,<initDist>,<remKm>,<totKm>,<hr>,<min>,<theme>,<speed>,<limit>,<temp>,<rain>,<road>
     const payload = `NAV,${turnType},${distMeters},${initDist},${remKm},${totalTripKm},${now.getHours()},${now.getMinutes()},${currentThemeMode},${liveSpeedKmh},${speedLimitKmh},${ambientTemp},${rainActive},${cleanRoad}\n`;
     writeBLE(payload);
   }
