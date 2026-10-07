@@ -3,13 +3,18 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>Tripper BLE Controller & Simulator</title>
+  <title>Tripper Map Navigator</title>
+
+  <!-- Leaflet CSS & JS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
   <style>
     :root {
       --bg: #121212;
       --card: #1e1e1e;
       --accent: #d80000;
-      --accent-blue: #007aff;
+      --accent-green: #00e676;
       --text: #ffffff;
       --text-dim: #888888;
       --border: #2d2d2d;
@@ -19,210 +24,116 @@
       background-color: var(--bg);
       color: var(--text);
       margin: 0;
-      padding: 16px;
+      padding: 12px;
       display: flex;
       flex-direction: column;
       align-items: center;
     }
     .container {
       width: 100%;
-      max-width: 440px;
+      max-width: 480px;
       display: flex;
       flex-direction: column;
-      gap: 14px;
+      gap: 10px;
+    }
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
     }
     h1 {
-      font-size: 1.25rem;
-      margin: 4px 0;
-      text-align: center;
-      letter-spacing: 1px;
+      font-size: 1.1rem;
+      margin: 0;
       text-transform: uppercase;
+      letter-spacing: 1px;
     }
     .status-badge {
-      text-align: center;
-      font-size: 0.8rem;
+      font-size: 0.75rem;
       font-weight: 600;
-      padding: 6px 12px;
-      border-radius: 20px;
+      padding: 4px 10px;
+      border-radius: 12px;
       background: #2a2a2a;
       color: var(--text-dim);
-      align-self: center;
     }
     .status-badge.connected {
       background: #004d20;
-      color: #00e676;
+      color: var(--accent-green);
+    }
+    #map {
+      width: 100%;
+      height: 320px;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      z-index: 1;
     }
     .card {
       background: var(--card);
       border: 1px solid var(--border);
       border-radius: 12px;
-      padding: 16px;
+      padding: 12px;
       display: flex;
       flex-direction: column;
-      gap: 12px;
+      gap: 8px;
     }
-    .card-title {
-      font-size: 0.85rem;
+    .nav-instruction {
+      font-size: 1rem;
       font-weight: 700;
-      letter-spacing: 0.5px;
       color: var(--text);
-      text-transform: uppercase;
-      border-bottom: 1px solid var(--border);
-      padding-bottom: 6px;
     }
-    label {
-      font-size: 0.72rem;
-      font-weight: 600;
+    .nav-meta {
+      font-size: 0.8rem;
       color: var(--text-dim);
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
     }
-    input, select {
-      width: 100%;
-      background: #2a2a2a;
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 10px;
-      color: #fff;
-      font-size: 0.95rem;
-      outline: none;
-    }
-    input:focus, select:focus {
-      border-color: var(--accent);
+    .nav-meta b {
+      color: var(--accent-green);
     }
     .row {
       display: flex;
-      gap: 10px;
-    }
-    .row > div {
-      flex: 1;
+      gap: 8px;
     }
     button {
+      flex: 1;
       background: var(--accent);
       color: #fff;
       border: none;
       border-radius: 8px;
-      padding: 13px;
-      font-size: 0.95rem;
+      padding: 12px;
+      font-size: 0.9rem;
       font-weight: 600;
       cursor: pointer;
-      letter-spacing: 0.5px;
-      transition: opacity 0.15s;
     }
-    button:active {
-      opacity: 0.8;
-    }
-    button.secondary {
-      background: #2a2a2a;
-      border: 1px solid var(--border);
-    }
-    button.sim-active {
-      background: #c67d00;
-    }
-    .preview-box {
-      font-family: monospace;
+    button:active { opacity: 0.8; }
+    button.secondary { background: #2a2a2a; border: 1px solid var(--border); }
+    .hint {
       font-size: 0.75rem;
-      background: #000;
-      border-radius: 6px;
-      padding: 8px;
-      color: #00e676;
-      word-break: break-all;
-    }
-    .sim-info {
-      font-size: 0.82rem;
       color: var(--text-dim);
-      line-height: 1.4;
-      background: #151515;
-      padding: 10px;
-      border-radius: 8px;
-      border: 1px dashed var(--border);
-    }
-    .sim-info b {
-      color: #fff;
+      text-align: center;
     }
   </style>
 </head>
 <body>
 
 <div class="container">
-  <h1>Tripper Controller</h1>
-  <div id="statusBadge" class="status-badge">DISCONNECTED</div>
+  <header>
+    <h1>Tripper Map</h1>
+    <div id="statusBadge" class="status-badge">DISCONNECTED</div>
+  </header>
 
-  <button id="btnConnect" onclick="toggleConnection()">Connect to Tripper</button>
-
-  <!-- AUTO SIMULATION CARD -->
-  <div class="card">
-    <div class="card-title">Auto Ride Simulator</div>
-    <div class="sim-info" id="simStatusText">
-      Status: <b>Idle</b><br>
-      Step: <b id="simStepName">-</b> | Dist to Turn: <b id="simDist">-</b>
-    </div>
-
-    <div class="row">
-      <div>
-        <label for="simSpeed">Sim Speed</label>
-        <select id="simSpeed">
-          <option value="1">1x (Cruising ~40 km/h)</option>
-          <option value="2" selected>2x (Fast ~80 km/h)</option>
-          <option value="4">4x (Hyper ~160 km/h)</option>
-        </select>
-      </div>
-    </div>
-
-    <div class="row">
-      <button id="btnStartSim" onclick="toggleSimulation()">Start Simulation</button>
-      <button class="secondary" onclick="resetSimulation()">Reset</button>
-    </div>
+  <div class="row">
+    <button id="btnConnect" onclick="toggleConnection()">Connect BLE</button>
+    <button class="secondary" onclick="centerOnUser()">My Location</button>
   </div>
 
-  <!-- MANUAL OVERRIDE CARD -->
+  <!-- Interactive Map -->
+  <div id="map"></div>
+  <div class="hint">Tap anywhere on the map to set a route destination</div>
+
+  <!-- Active Turn HUD -->
   <div class="card">
-    <div class="card-title">Manual Controls</div>
-    <div>
-      <label for="turnSelect">Maneuver Type</label>
-      <select id="turnSelect" onchange="updatePreview()">
-        <option value="0">Straight (0)</option>
-        <option value="1" selected>Turn Left (1)</option>
-        <option value="2">Turn Right (2)</option>
-        <option value="3">U-Turn (3)</option>
-        <option value="4">Roundabout (4)</option>
-      </select>
+    <div class="nav-instruction" id="turnText">No Active Route</div>
+    <div class="nav-meta">
+      Next Turn: <b id="distText">-- m</b> | Remaining: <b id="remDistText">-- km</b>
     </div>
-
-    <div class="row">
-      <div>
-        <label for="stepDist">Turn Dist (m)</label>
-        <input type="number" id="stepDist" value="450" oninput="updatePreview()">
-      </div>
-      <div>
-        <label for="stepInitDist">Initial Dist (m)</label>
-        <input type="number" id="stepInitDist" value="500" oninput="updatePreview()">
-      </div>
-    </div>
-
-    <div>
-      <label for="roadName">Road Name</label>
-      <input type="text" id="roadName" value="MG Road" maxlength="28" oninput="updatePreview()">
-    </div>
-
-    <div class="row">
-      <div>
-        <label for="remDist">Remaining (km)</label>
-        <input type="number" step="0.1" id="remDist" value="7.5" oninput="updatePreview()">
-      </div>
-      <div>
-        <label for="totalDist">Total (km)</label>
-        <input type="number" step="0.1" id="totalDist" value="10.0" oninput="updatePreview()">
-      </div>
-    </div>
-
-    <button onclick="sendManualPacket()">Send Manual Update</button>
-  </div>
-
-  <!-- PACKET PREVIEW -->
-  <div class="card">
-    <label>Live Packet Stream</label>
-    <div id="preview" class="preview-box">NAV,...</div>
   </div>
 </div>
 
@@ -233,59 +144,31 @@
   let bleDevice = null;
   let navCharacteristic = null;
 
-  // -----------------------------------------------------------
-  // Simulated Route Data
-  // -----------------------------------------------------------
-  const SIM_ROUTE = [
-    { turn: 0, distance: 800,  road: "Main Highway" },
-    { turn: 1, distance: 450,  road: "Church Street" },
-    { turn: 2, distance: 600,  road: "Residency Road" },
-    { turn: 4, distance: 500,  road: "Ring Roundabout" },
-    { turn: 3, distance: 350,  road: "U-Turn Airport Expy" },
-    { turn: 0, distance: 1200, road: "Destination Way" }
-  ];
+  let map, userMarker, destMarker, routeLine;
+  let userLat = null, userLon = null;
+  let routeSteps = [];
+  let currentStepIdx = 0;
+  let totalTripKm = 0;
 
-  const TOTAL_SIM_TRIP_KM = 8.5;
-  let simIndex = 0;
-  let simCurrentStepDist = 0;
-  let simStepInitialDist = 0;
-  let simRemainingTripKm = TOTAL_SIM_TRIP_KM;
-  let simInterval = null;
+  // Initialize Leaflet Map
+  function initMap() {
+    map = L.map('map').setView([19.0760, 72.8777], 14); // Default view
 
-  function updateStatus(connected) {
-    const badge = document.getElementById("statusBadge");
-    const btn = document.getElementById("btnConnect");
-    if (connected) {
-      badge.textContent = "CONNECTED: " + (bleDevice.name || "Tripper");
-      badge.classList.add("connected");
-      btn.textContent = "Disconnect";
-      btn.classList.add("secondary");
-    } else {
-      badge.textContent = "DISCONNECTED";
-      badge.classList.remove("connected");
-      btn.textContent = "Connect to Tripper";
-      btn.classList.remove("secondary");
-      stopSimulation();
-    }
-  }
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: '© OpenStreetMap'
+    }).addTo(map);
 
-  function buildPayload(turn, stepDist, initDist, remDist, totDist, road) {
-    const now = new Date();
-    const hr = now.getHours();
-    const min = now.getMinutes();
-    return `NAV,${turn},${stepDist},${initDist},${remDist},${totDist},${hr},${min},${road}\n`;
-  }
+    // Tap to set destination
+    map.on('click', function(e) {
+      if (!userLat || !userLon) {
+        alert("Waiting for your phone's GPS position...");
+        return;
+      }
+      setDestination(e.latlng.lat, e.latlng.lng);
+    });
 
-  function updatePreview() {
-    const payload = buildPayload(
-      document.getElementById("turnSelect").value,
-      document.getElementById("stepDist").value || "0",
-      document.getElementById("stepInitDist").value || "0",
-      document.getElementById("remDist").value || "0.0",
-      document.getElementById("totalDist").value || "0.0",
-      document.getElementById("roadName").value || "Road"
-    );
-    document.getElementById("preview").textContent = payload.trim();
+    startGpsTracking();
   }
 
   // -----------------------------------------------------------
@@ -299,7 +182,7 @@
 
     try {
       if (!navigator.bluetooth) {
-        alert("Web Bluetooth not found. Open this page in 'Bluefy' on iOS or Chrome/Edge on laptop.");
+        alert("Web Bluetooth not found. Open this in Bluefy on iOS.");
         return;
       }
 
@@ -308,18 +191,22 @@
         optionalServices: [SERVICE_UUID]
       });
 
-      bleDevice.addEventListener('gattserverdisconnected', () => updateStatus(false));
+      bleDevice.addEventListener('gattserverdisconnected', () => {
+        document.getElementById("statusBadge").textContent = "DISCONNECTED";
+        document.getElementById("statusBadge").classList.remove("connected");
+        document.getElementById("btnConnect").textContent = "Connect BLE";
+      });
 
       const server = await bleDevice.gatt.connect();
       const service = await server.getPrimaryService(SERVICE_UUID);
       navCharacteristic = await service.getCharacteristic(CHARACTERISTIC_UUID);
 
-      updateStatus(true);
-      sendManualPacket();
+      document.getElementById("statusBadge").textContent = "CONNECTED";
+      document.getElementById("statusBadge").classList.add("connected");
+      document.getElementById("btnConnect").textContent = "Disconnect";
     } catch (err) {
       console.error(err);
       alert("BLE Error: " + err.message);
-      updateStatus(false);
     }
   }
 
@@ -328,127 +215,151 @@
     try {
       const encoder = new TextEncoder();
       await navCharacteristic.writeValue(encoder.encode(rawString));
-      document.getElementById("preview").textContent = rawString.trim();
     } catch (err) {
       console.error("BLE Write error:", err);
     }
   }
 
-  function sendManualPacket() {
-    if (!navCharacteristic) {
-      alert("Please connect to Tripper first!");
-      return;
-    }
-    stopSimulation();
-    const payload = buildPayload(
-      document.getElementById("turnSelect").value,
-      document.getElementById("stepDist").value,
-      document.getElementById("stepInitDist").value,
-      document.getElementById("remDist").value,
-      document.getElementById("totalDist").value,
-      document.getElementById("roadName").value
+  // -----------------------------------------------------------
+  // GPS & Live Tracking
+  // -----------------------------------------------------------
+  function startGpsTracking() {
+    if (!navigator.geolocation) return;
+
+    navigator.geolocation.watchPosition(
+      (pos) => {
+        userLat = pos.coords.latitude;
+        userLon = pos.coords.longitude;
+
+        if (!userMarker) {
+          userMarker = L.circleMarker([userLat, userLon], {
+            radius: 8,
+            fillColor: "#007aff",
+            color: "#ffffff",
+            weight: 2,
+            opacity: 1,
+            fillOpacity: 0.9
+          }).addTo(map);
+          map.setView([userLat, userLon], 16);
+        } else {
+          userMarker.setLatLng([userLat, userLon]);
+        }
+
+        evaluateNavigation();
+      },
+      (err) => console.warn(err),
+      { enableHighAccuracy: true, maximumAge: 1000 }
     );
-    writeBLE(payload);
+  }
+
+  function centerOnUser() {
+    if (userLat && userLon) {
+      map.setView([userLat, userLon], 16);
+    }
   }
 
   // -----------------------------------------------------------
-  // Simulation Engine
+  // Routing with OpenStreetMap (OSRM)
   // -----------------------------------------------------------
-  function initSimStep() {
-    const leg = SIM_ROUTE[simIndex];
-    simCurrentStepDist = leg.distance;
-    simStepInitialDist = leg.distance;
-    updateSimDisplay();
+  async function setDestination(lat, lon) {
+    if (destMarker) map.removeLayer(destMarker);
+    destMarker = L.marker([lat, lon]).addTo(map);
+
+    document.getElementById("turnText").textContent = "Calculating route...";
+
+    // Query free OSRM Routing API with full turn steps
+    const url = `https://router.project-osrm.org/route/v1/driving/${userLon},${userLat};${lon},${lat}?overview=full&geometries=geojson&steps=true`;
+
+    try {
+      const res = await fetch(url);
+      const data = await res.json();
+
+      if (!data.routes || data.routes.length === 0) {
+        alert("No drivable route found!");
+        return;
+      }
+
+      const route = data.routes[0];
+      totalTripKm = (route.distance / 1000.0).toFixed(1);
+      routeSteps = route.legs[0].steps;
+      currentStepIdx = 0;
+
+      // Draw route line on map
+      if (routeLine) map.removeLayer(routeLine);
+      routeLine = L.geoJSON(route.geometry, {
+        style: { color: '#00e676', weight: 5, opacity: 0.8 }
+      }).addTo(map);
+
+      evaluateNavigation();
+    } catch (err) {
+      alert("Route calculation error: " + err.message);
+    }
   }
 
-  function updateSimDisplay() {
-    const leg = SIM_ROUTE[simIndex];
-    document.getElementById("simStepName").textContent = `${leg.road} (Step ${simIndex + 1}/${SIM_ROUTE.length})`;
-    document.getElementById("simDist").textContent = `${simCurrentStepDist} m`;
+  // -----------------------------------------------------------
+  // Turn-by-Turn Logic & Tripper Mapping
+  // -----------------------------------------------------------
+  // Maps OSRM turn maneuvers to Tripper enum:
+  // 0 = Straight, 1 = Left, 2 = Right, 3 = U-Turn, 4 = Roundabout
+  function mapManeuverToTripper(maneuver) {
+    const type = maneuver.type;
+    const modifier = maneuver.modifier || "";
+
+    if (type.includes("roundabout") || type.includes("rotary")) return 4;
+    if (modifier.includes("left")) return 1;
+    if (modifier.includes("right")) return 2;
+    if (modifier.includes("u-turn")) return 3;
+    return 0; // Default straight
   }
 
-  function toggleSimulation() {
-    if (!navCharacteristic) {
-      alert("Please connect to Tripper via Bluetooth first!");
-      return;
+  function evaluateNavigation() {
+    if (!routeSteps || routeSteps.length === 0 || currentStepIdx >= routeSteps.length) return;
+
+    const step = routeSteps[currentStepIdx];
+    const stepTargetCoord = step.maneuver.location; // [lon, lat]
+    
+    // Distance from user to the next turn maneuver point
+    const distMeters = Math.round(getDistanceMeters(userLat, userLon, stepTargetCoord[1], stepTargetCoord[0]));
+
+    // If within 25 meters of the turn point, advance to next maneuver
+    if (distMeters < 25 && currentStepIdx < routeSteps.length - 1) {
+      currentStepIdx++;
     }
 
-    if (simInterval) {
-      stopSimulation();
-    } else {
-      startSimulation();
+    const activeStep = routeSteps[currentStepIdx];
+    const turnType = mapManeuverToTripper(activeStep.maneuver);
+    const roadName = activeStep.name || "Next Street";
+    const initDist = Math.round(activeStep.distance) || distMeters;
+
+    // Remaining total trip distance calculation
+    let remDistMeters = distMeters;
+    for (let i = currentStepIdx + 1; i < routeSteps.length; i++) {
+      remDistMeters += routeSteps[i].distance;
     }
-  }
+    const remKm = (remDistMeters / 1000.0).toFixed(1);
 
-  function startSimulation() {
-    const btn = document.getElementById("btnStartSim");
-    btn.textContent = "Pause Simulation";
-    btn.classList.add("sim-active");
-    document.getElementById("simStatusText").querySelector("b").textContent = "Running";
+    // Update UI HUD
+    document.getElementById("turnText").textContent = `${activeStep.maneuver.instruction || roadName}`;
+    document.getElementById("distText").textContent = `${distMeters} m`;
+    document.getElementById("remDistText").textContent = `${remKm} km`;
 
-    if (simCurrentStepDist === 0) {
-      initSimStep();
-    }
-
-    simInterval = setInterval(simulationTick, 1000);
-  }
-
-  function stopSimulation() {
-    if (simInterval) {
-      clearInterval(simInterval);
-      simInterval = null;
-    }
-    const btn = document.getElementById("btnStartSim");
-    btn.textContent = "Resume Simulation";
-    btn.classList.remove("sim-active");
-    const bTag = document.getElementById("simStatusText").querySelector("b");
-    if (bTag) bTag.textContent = "Paused";
-  }
-
-  function resetSimulation() {
-    stopSimulation();
-    simIndex = 0;
-    simRemainingTripKm = TOTAL_SIM_TRIP_KM;
-    initSimStep();
-    const btn = document.getElementById("btnStartSim");
-    btn.textContent = "Start Simulation";
-    document.getElementById("simStatusText").querySelector("b").textContent = "Idle";
-  }
-
-  function simulationTick() {
-    const speedMultiplier = parseInt(document.getElementById("simSpeed").value, 10);
-    // Base decrement: 15 meters per second at 1x (~54 km/h)
-    const decrement = 15 * speedMultiplier;
-
-    simCurrentStepDist -= decrement;
-    simRemainingTripKm -= (decrement / 1000.0);
-    if (simRemainingTripKm < 0) simRemainingTripKm = 0;
-
-    if (simCurrentStepDist <= 0) {
-      // Advance to next leg
-      simIndex = (simIndex + 1) % SIM_ROUTE.length;
-      initSimStep();
-    }
-
-    const currentLeg = SIM_ROUTE[simIndex];
-    updateSimDisplay();
-
-    // Construct packet and push via BLE
-    const payload = buildPayload(
-      currentLeg.turn,
-      Math.max(0, simCurrentStepDist),
-      simStepInitialDist,
-      simRemainingTripKm.toFixed(1),
-      TOTAL_SIM_TRIP_KM.toFixed(1),
-      currentLeg.road
-    );
-
+    // Construct Tripper protocol packet and stream via BLE
+    const now = new Date();
+    const payload = `NAV,${turnType},${distMeters},${initDist},${remKm},${totalTripKm},${now.getHours()},${now.getMinutes()},${roadName}\n`;
     writeBLE(payload);
   }
 
-  // Init default state
-  initSimStep();
-  updatePreview();
+  function getDistanceMeters(lat1, lon1, lat2, lon2) {
+    const R = 6371000;
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+              Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+              Math.sin(dLon/2) * Math.sin(dLon/2);
+    return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
+  }
+
+  window.onload = initMap;
 </script>
 
 </body>
