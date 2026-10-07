@@ -3,11 +3,11 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>Tripper Navigator</title>
+  <title>Tripper Navigator v3</title>
 
-  <!-- Leaflet CDN -->
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <!-- High-reliability Cloudflare CDN for Leaflet -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 
   <style>
     :root {
@@ -60,8 +60,16 @@
       background: #093c1d;
       color: var(--accent-green);
     }
-
-    /* Search Bar */
+    /* Diagnostic Logger on screen */
+    #diagLog {
+      background: #000;
+      border: 1px solid #333;
+      border-radius: 6px;
+      padding: 6px 10px;
+      font-family: monospace;
+      font-size: 0.72rem;
+      color: #ffca28;
+    }
     .search-container {
       position: relative;
       width: 100%;
@@ -111,20 +119,14 @@
       background: #21262d;
       color: #fff;
     }
-
-    /* Map Styling with Native Dark Filter */
     #map {
       width: 100%;
-      height: 350px;
+      height: 340px;
       border-radius: 12px;
       border: 1px solid var(--border);
       z-index: 1;
-      background: #111;
+      background: #1b1f24;
     }
-    .dark-tiles {
-      filter: brightness(0.65) invert(1) contrast(2.5) hue-rotate(200deg) saturate(0.3) brightness(0.8);
-    }
-
     .card {
       background: var(--card);
       border: 1px solid var(--border);
@@ -177,34 +179,32 @@
 
 <div class="container">
   <header>
-    <h1>Tripper Map</h1>
+    <h1>Tripper Map v3</h1>
     <div id="statusBadge" class="status-badge">DISCONNECTED</div>
   </header>
+
+  <div id="diagLog">System: Initializing...</div>
 
   <div class="row">
     <button id="btnConnect" onclick="toggleConnection()">Connect BLE</button>
     <button class="secondary" onclick="centerOnUser()">My Location</button>
   </div>
 
-  <!-- Search Input -->
   <div class="search-container">
     <div class="search-box">
-      <input type="text" id="searchInput" class="search-input" placeholder="Search address or tap map..." autocomplete="off">
+      <input type="text" id="searchInput" class="search-input" placeholder="Search destination or tap map..." autocomplete="off">
       <div id="suggestions" class="suggestions"></div>
     </div>
     <button class="secondary" style="flex: 0 0 75px;" onclick="handleManualSearch()">Search</button>
   </div>
 
-  <!-- High-Contrast Map -->
   <div id="map"></div>
 
-  <!-- Route Actions -->
   <div class="row" id="navControlRow" style="display: none;">
     <button id="btnStartNav" class="start-nav" onclick="startNavigation()">Start Navigation</button>
     <button class="secondary" onclick="cancelRoute()">Clear</button>
   </div>
 
-  <!-- Turn HUD -->
   <div class="card">
     <div class="nav-instruction" id="turnText">Search or tap destination on map</div>
     <div class="nav-meta">
@@ -214,8 +214,14 @@
 </div>
 
 <script>
+  function logMsg(msg) {
+    const el = document.getElementById("diagLog");
+    if (el) el.textContent = msg;
+    console.log(msg);
+  }
+
   // ===========================================================
-  // 1. BLUETOOTH ENGINE (Protected & Independent)
+  // 1. ISOLATED BLUETOOTH ENGINE
   // ===========================================================
   const SERVICE_UUID = "4fafc201-1fb5-459e-8fcc-c5c9c331914b";
   const CHARACTERISTIC_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a8";
@@ -224,6 +230,7 @@
   let navCharacteristic = null;
 
   async function toggleConnection() {
+    logMsg("BLE: Opening request window...");
     if (bleDevice && bleDevice.gatt && bleDevice.gatt.connected) {
       bleDevice.gatt.disconnect();
       return;
@@ -231,7 +238,8 @@
 
     try {
       if (!navigator.bluetooth) {
-        alert("Web Bluetooth not found. Open this page in the Bluefy app on iOS.");
+        alert("Web Bluetooth not found. Make sure you are using the Bluefy app on iOS.");
+        logMsg("BLE Error: navigator.bluetooth missing");
         return;
       }
 
@@ -240,12 +248,15 @@
         optionalServices: [SERVICE_UUID]
       });
 
+      logMsg("BLE: Connecting to " + (bleDevice.name || "Device") + "...");
+
       bleDevice.addEventListener('gattserverdisconnected', () => {
         const badge = document.getElementById("statusBadge");
         const btn = document.getElementById("btnConnect");
         badge.textContent = "DISCONNECTED";
         badge.classList.remove("connected");
         btn.textContent = "Connect BLE";
+        logMsg("BLE: Disconnected");
       });
 
       const server = await bleDevice.gatt.connect();
@@ -257,8 +268,9 @@
       badge.textContent = "CONNECTED";
       badge.classList.add("connected");
       btn.textContent = "Disconnect";
+      logMsg("BLE: Connected & Ready!");
     } catch (err) {
-      console.error(err);
+      logMsg("BLE Error: " + err.message);
       alert("BLE Error: " + err.message);
     }
   }
@@ -274,7 +286,7 @@
   }
 
   // ===========================================================
-  // 2. MAP & NAVIGATION ENGINE
+  // 2. MAP & NAVIGATION ENGINE (Sandboxed with try/catch)
   // ===========================================================
   let map, userMarker, destMarker, routeLine;
   let userLat = null, userLon = null;
@@ -288,18 +300,21 @@
 
   function initMap() {
     try {
+      if (typeof L === 'undefined') {
+        logMsg("Map Error: Leaflet library failed to load");
+        return;
+      }
+
       map = L.map('map', { zoomControl: false }).setView([19.0760, 72.8777], 13);
 
-      // Official, 100% Free OpenStreetMap Tiles with Native Dark Dashboard Filter
       L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
         maxZoom: 19,
-        className: 'dark-tiles',
         attribution: '© OpenStreetMap'
       }).addTo(map);
 
       map.on('click', function(e) {
         if (!userLat || !userLon) {
-          alert("Waiting for phone GPS position...");
+          alert("Waiting for GPS position lock...");
           return;
         }
         selectDestination(e.latlng.lat, e.latlng.lng, "Pinned Location");
@@ -307,16 +322,6 @@
 
       setupSearch();
       startGpsTracking();
+      logMsg("System: Map & GPS Initialized");
     } catch (e) {
-      console.error("Map initialization failed:", e);
-    }
-  }
-
-  function setupSearch() {
-    const input = document.getElementById("searchInput");
-    const list = document.getElementById("suggestions");
-
-    input.addEventListener("input", () => {
-      clearTimeout(searchDebounce);
-      const query = input.value.trim();
-      if (
+      logMsg("Map Init Exception: " + e.message);
