@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>Tripper Map Navigator</title>
+  <title>Tripper Navigator</title>
 
   <!-- Leaflet CSS & JS -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
@@ -15,6 +15,7 @@
       --card: #1e1e1e;
       --accent: #d80000;
       --accent-green: #00e676;
+      --accent-blue: #2979ff;
       --text: #ffffff;
       --text-dim: #888888;
       --border: #2d2d2d;
@@ -35,6 +36,7 @@
       display: flex;
       flex-direction: column;
       gap: 10px;
+      position: relative;
     }
     header {
       display: flex;
@@ -59,29 +61,83 @@
       background: #004d20;
       color: var(--accent-green);
     }
+
+    /* Google Maps Style Search Bar */
+    .search-container {
+      position: relative;
+      width: 100%;
+      display: flex;
+      gap: 8px;
+    }
+    .search-box {
+      flex: 1;
+      position: relative;
+    }
+    .search-input {
+      width: 100%;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 12px 14px;
+      color: #fff;
+      font-size: 0.95rem;
+      outline: none;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.4);
+    }
+    .search-input:focus {
+      border-color: var(--accent-blue);
+    }
+    .suggestions {
+      position: absolute;
+      top: 100%;
+      left: 0;
+      right: 0;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      margin-top: 4px;
+      max-height: 220px;
+      overflow-y: auto;
+      z-index: 1000;
+      display: none;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.6);
+    }
+    .suggestion-item {
+      padding: 10px 14px;
+      font-size: 0.85rem;
+      border-bottom: 1px solid #2a2a2a;
+      cursor: pointer;
+      color: #ddd;
+    }
+    .suggestion-item:active, .suggestion-item:hover {
+      background: #2a2a2a;
+      color: #fff;
+    }
+
     #map {
       width: 100%;
-      height: 320px;
+      height: 360px;
       border-radius: 12px;
       border: 1px solid var(--border);
       z-index: 1;
     }
+
     .card {
       background: var(--card);
       border: 1px solid var(--border);
       border-radius: 12px;
-      padding: 12px;
+      padding: 14px;
       display: flex;
       flex-direction: column;
       gap: 8px;
     }
     .nav-instruction {
-      font-size: 1rem;
+      font-size: 1.1rem;
       font-weight: 700;
       color: var(--text);
     }
     .nav-meta {
-      font-size: 0.8rem;
+      font-size: 0.85rem;
       color: var(--text-dim);
     }
     .nav-meta b {
@@ -104,10 +160,13 @@
     }
     button:active { opacity: 0.8; }
     button.secondary { background: #2a2a2a; border: 1px solid var(--border); }
-    .hint {
-      font-size: 0.75rem;
-      color: var(--text-dim);
-      text-align: center;
+    button.start-nav {
+      background: var(--accent-green);
+      color: #000;
+      font-size: 1rem;
+    }
+    button.stop-nav {
+      background: #c62828;
     }
   </style>
 </head>
@@ -124,15 +183,29 @@
     <button class="secondary" onclick="centerOnUser()">My Location</button>
   </div>
 
+  <!-- Search Input for Destinations -->
+  <div class="search-container">
+    <div class="search-box">
+      <input type="text" id="searchInput" class="search-input" placeholder="Search destination or address..." autocomplete="off">
+      <div id="suggestions" class="suggestions"></div>
+    </div>
+    <button class="secondary" style="flex: 0 0 70px;" onclick="handleManualSearch()">Search</button>
+  </div>
+
   <!-- Interactive Map -->
   <div id="map"></div>
-  <div class="hint">Tap anywhere on the map to set a route destination</div>
 
-  <!-- Active Turn HUD -->
+  <!-- Navigation Action / Controls -->
+  <div class="row" id="navControlRow" style="display: none;">
+    <button id="btnStartNav" class="start-nav" onclick="startNavigation()">Start Navigation</button>
+    <button class="secondary" onclick="cancelRoute()">Clear Route</button>
+  </div>
+
+  <!-- Live Turn HUD -->
   <div class="card">
-    <div class="nav-instruction" id="turnText">No Active Route</div>
+    <div class="nav-instruction" id="turnText">Search or tap destination</div>
     <div class="nav-meta">
-      Next Turn: <b id="distText">-- m</b> | Remaining: <b id="remDistText">-- km</b>
+      Next Turn: <b id="distText">-- m</b> | Trip Rem: <b id="remDistText">-- km</b>
     </div>
   </div>
 </div>
@@ -146,33 +219,278 @@
 
   let map, userMarker, destMarker, routeLine;
   let userLat = null, userLon = null;
+  let targetLat = null, targetLon = null, targetName = "Destination";
+
+  let isNavigating = false;
   let routeSteps = [];
   let currentStepIdx = 0;
   let totalTripKm = 0;
+  let searchDebounce = null;
 
-  // Initialize Leaflet Map
+  // Initialize Map
   function initMap() {
-    map = L.map('map').setView([19.0760, 72.8777], 14); // Default view
+    map = L.map('map', { zoomControl: false }).setView([19.0760, 72.8777], 14);
 
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       maxZoom: 19,
       attribution: '© OpenStreetMap'
     }).addTo(map);
 
-    // Tap to set destination
+    // Tap directly on map to drop destination pin
     map.on('click', function(e) {
       if (!userLat || !userLon) {
-        alert("Waiting for your phone's GPS position...");
+        alert("Waiting for GPS position lock...");
         return;
       }
-      setDestination(e.latlng.lat, e.latlng.lng);
+      selectDestination(e.latlng.lat, e.latlng.lng, "Pinned Location");
     });
 
+    setupSearchEvents();
     startGpsTracking();
   }
 
   // -----------------------------------------------------------
-  // Bluetooth Connection Handling
+  // Destination Search (Nominatim Geocoding API)
+  // -----------------------------------------------------------
+  function setupSearchEvents() {
+    const input = document.getElementById("searchInput");
+    const list = document.getElementById("suggestions");
+
+    input.addEventListener("input", () => {
+      clearTimeout(searchDebounce);
+      const query = input.value.trim();
+      if (query.length < 3) {
+        list.style.display = "none";
+        return;
+      }
+
+      searchDebounce = setTimeout(async () => {
+        try {
+          const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=5`;
+          const res = await fetch(url);
+          const data = await res.json();
+          renderSuggestions(data);
+        } catch (e) {
+          console.error("Geocode error", e);
+        }
+      }, 350);
+    });
+
+    document.addEventListener("click", (e) => {
+      if (!e.target.closest('.search-container')) {
+        list.style.display = "none";
+      }
+    });
+  }
+
+  function renderSuggestions(items) {
+    const list = document.getElementById("suggestions");
+    list.innerHTML = "";
+    if (!items || items.length === 0) {
+      list.style.display = "none";
+      return;
+    }
+
+    items.forEach(item => {
+      const div = document.createElement("div");
+      div.className = "suggestion-item";
+      div.textContent = item.display_name;
+      div.onclick = () => {
+        document.getElementById("searchInput").value = item.display_name.split(',')[0];
+        list.style.display = "none";
+        selectDestination(parseFloat(item.lat), parseFloat(item.lon), item.display_name.split(',')[0]);
+      };
+      list.appendChild(div);
+    });
+
+    list.style.display = "block";
+  }
+
+  function handleManualSearch() {
+    const query = document.getElementById("searchInput").value.trim();
+    if (!query) return;
+    fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=1`)
+      .then(r => r.json())
+      .then(data => {
+        if (data && data.length > 0) {
+          selectDestination(parseFloat(data[0].lat), parseFloat(data[0].lon), data[0].display_name.split(',')[0]);
+        } else {
+          alert("Location not found. Try a different query.");
+        }
+      });
+  }
+
+  // -----------------------------------------------------------
+  // Route Fetching & Navigation Setup
+  // -----------------------------------------------------------
+  async function selectDestination(lat, lon, label) {
+    targetLat = lat;
+    targetLon = lon;
+    targetName = label;
+
+    if (destMarker) map.removeLayer(destMarker);
+    destMarker = L.marker([lat, lon]).addTo(map).bindPopup(label).openPopup();
+
+    document.getElementById("turnText").textContent = "Calculating route...";
+
+    const url = `https://router.project-osrm.org/route/v1/driving/${userLon},${userLat};${lon},${lat}?overview=full&geometries=geojson&steps=true`;
+
+    try {
+      const res = await fetch(url);
+      const data = await res.json();
+      if (!data.routes || data.routes.length === 0) {
+        alert("No drivable route found to this location!");
+        return;
+      }
+
+      const route = data.routes[0];
+      totalTripKm = (route.distance / 1000.0).toFixed(1);
+      routeSteps = route.legs[0].steps;
+      currentStepIdx = 0;
+
+      if (routeLine) map.removeLayer(routeLine);
+      routeLine = L.geoJSON(route.geometry, {
+        style: { color: '#00e676', weight: 5, opacity: 0.85 }
+      }).addTo(map);
+
+      map.fitBounds(routeLine.getBounds(), { padding: [50, 50] });
+
+      // Show the Start Navigation control bar
+      document.getElementById("navControlRow").style.display = "flex";
+      document.getElementById("turnText").textContent = `Route Ready (${totalTripKm} km)`;
+      document.getElementById("remDistText").textContent = `${totalTripKm} km`;
+    } catch (err) {
+      alert("Route error: " + err.message);
+    }
+  }
+
+  function startNavigation() {
+    isNavigating = true;
+    const btn = document.getElementById("btnStartNav");
+    btn.textContent = "Stop Navigation";
+    btn.className = "stop-nav";
+    btn.onclick = stopNavigation;
+
+    centerOnUser();
+    evaluateNavigation();
+  }
+
+  function stopNavigation() {
+    isNavigating = false;
+    const btn = document.getElementById("btnStartNav");
+    btn.textContent = "Start Navigation";
+    btn.className = "start-nav";
+    btn.onclick = startNavigation;
+    document.getElementById("turnText").textContent = "Navigation Stopped";
+  }
+
+  function cancelRoute() {
+    stopNavigation();
+    if (destMarker) map.removeLayer(destMarker);
+    if (routeLine) map.removeLayer(routeLine);
+    routeSteps = [];
+    document.getElementById("navControlRow").style.display = "none";
+    document.getElementById("turnText").textContent = "Search or tap destination";
+    document.getElementById("distText").textContent = "-- m";
+    document.getElementById("remDistText").textContent = "-- km";
+  }
+
+  // -----------------------------------------------------------
+  // Live GPS Tracking & BLE Dispatch
+  // -----------------------------------------------------------
+  function startGpsTracking() {
+    if (!navigator.geolocation) return;
+
+    navigator.geolocation.watchPosition(
+      (pos) => {
+        userLat = pos.coords.latitude;
+        userLon = pos.coords.longitude;
+
+        if (!userMarker) {
+          userMarker = L.circleMarker([userLat, userLon], {
+            radius: 8,
+            fillColor: "#2979ff",
+            color: "#ffffff",
+            weight: 2,
+            opacity: 1,
+            fillOpacity: 0.95
+          }).addTo(map);
+          map.setView([userLat, userLon], 16);
+        } else {
+          userMarker.setLatLng([userLat, userLon]);
+        }
+
+        if (isNavigating) {
+          map.setView([userLat, userLon]);
+          evaluateNavigation();
+        }
+      },
+      (err) => console.warn(err),
+      { enableHighAccuracy: true, maximumAge: 1000 }
+    );
+  }
+
+  function centerOnUser() {
+    if (userLat && userLon) {
+      map.setView([userLat, userLon], 16);
+    }
+  }
+
+  function mapManeuverToTripper(maneuver) {
+    const type = maneuver.type;
+    const modifier = maneuver.modifier || "";
+
+    if (type.includes("roundabout") || type.includes("rotary")) return 4;
+    if (modifier.includes("left")) return 1;
+    if (modifier.includes("right")) return 2;
+    if (modifier.includes("u-turn")) return 3;
+    return 0; // Straight
+  }
+
+  function evaluateNavigation() {
+    if (!isNavigating || !routeSteps || routeSteps.length === 0 || currentStepIdx >= routeSteps.length) return;
+
+    const step = routeSteps[currentStepIdx];
+    const stepTargetCoord = step.maneuver.location;
+    const distMeters = Math.round(getDistanceMeters(userLat, userLon, stepTargetCoord[1], stepTargetCoord[0]));
+
+    if (distMeters < 25 && currentStepIdx < routeSteps.length - 1) {
+      currentStepIdx++;
+    }
+
+    const activeStep = routeSteps[currentStepIdx];
+    const turnType = mapManeuverToTripper(activeStep.maneuver);
+    const roadName = activeStep.name || targetName || "Road";
+    const initDist = Math.round(activeStep.distance) || distMeters;
+
+    let remDistMeters = distMeters;
+    for (let i = currentStepIdx + 1; i < routeSteps.length; i++) {
+      remDistMeters += routeSteps[i].distance;
+    }
+    const remKm = (remDistMeters / 1000.0).toFixed(1);
+
+    document.getElementById("turnText").textContent = activeStep.maneuver.instruction || roadName;
+    document.getElementById("distText").textContent = `${distMeters} m`;
+    document.getElementById("remDistText").textContent = `${remKm} km`;
+
+    // Send packet: NAV,<turnType>,<stepDist>,<stepInitDist>,<remDist>,<totalDist>,<hr>,<min>,<roadName>
+    const now = new Date();
+    const payload = `NAV,${turnType},${distMeters},${initDist},${remKm},${totalTripKm},${now.getHours()},${now.getMinutes()},${roadName}\n`;
+    writeBLE(payload);
+  }
+
+  function getDistanceMeters(lat1, lon1, lat2, lon2) {
+    const R = 6371000;
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+              Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+              Math.sin(dLon/2) * Math.sin(dLon/2);
+    return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
+  }
+
+  // -----------------------------------------------------------
+  // Bluetooth Web API
   // -----------------------------------------------------------
   async function toggleConnection() {
     if (bleDevice && bleDevice.gatt.connected) {
@@ -182,7 +500,7 @@
 
     try {
       if (!navigator.bluetooth) {
-        alert("Web Bluetooth not found. Open this in Bluefy on iOS.");
+        alert("Web Bluetooth not available in this browser. Use Bluefy on iOS.");
         return;
       }
 
@@ -218,145 +536,6 @@
     } catch (err) {
       console.error("BLE Write error:", err);
     }
-  }
-
-  // -----------------------------------------------------------
-  // GPS & Live Tracking
-  // -----------------------------------------------------------
-  function startGpsTracking() {
-    if (!navigator.geolocation) return;
-
-    navigator.geolocation.watchPosition(
-      (pos) => {
-        userLat = pos.coords.latitude;
-        userLon = pos.coords.longitude;
-
-        if (!userMarker) {
-          userMarker = L.circleMarker([userLat, userLon], {
-            radius: 8,
-            fillColor: "#007aff",
-            color: "#ffffff",
-            weight: 2,
-            opacity: 1,
-            fillOpacity: 0.9
-          }).addTo(map);
-          map.setView([userLat, userLon], 16);
-        } else {
-          userMarker.setLatLng([userLat, userLon]);
-        }
-
-        evaluateNavigation();
-      },
-      (err) => console.warn(err),
-      { enableHighAccuracy: true, maximumAge: 1000 }
-    );
-  }
-
-  function centerOnUser() {
-    if (userLat && userLon) {
-      map.setView([userLat, userLon], 16);
-    }
-  }
-
-  // -----------------------------------------------------------
-  // Routing with OpenStreetMap (OSRM)
-  // -----------------------------------------------------------
-  async function setDestination(lat, lon) {
-    if (destMarker) map.removeLayer(destMarker);
-    destMarker = L.marker([lat, lon]).addTo(map);
-
-    document.getElementById("turnText").textContent = "Calculating route...";
-
-    // Query free OSRM Routing API with full turn steps
-    const url = `https://router.project-osrm.org/route/v1/driving/${userLon},${userLat};${lon},${lat}?overview=full&geometries=geojson&steps=true`;
-
-    try {
-      const res = await fetch(url);
-      const data = await res.json();
-
-      if (!data.routes || data.routes.length === 0) {
-        alert("No drivable route found!");
-        return;
-      }
-
-      const route = data.routes[0];
-      totalTripKm = (route.distance / 1000.0).toFixed(1);
-      routeSteps = route.legs[0].steps;
-      currentStepIdx = 0;
-
-      // Draw route line on map
-      if (routeLine) map.removeLayer(routeLine);
-      routeLine = L.geoJSON(route.geometry, {
-        style: { color: '#00e676', weight: 5, opacity: 0.8 }
-      }).addTo(map);
-
-      evaluateNavigation();
-    } catch (err) {
-      alert("Route calculation error: " + err.message);
-    }
-  }
-
-  // -----------------------------------------------------------
-  // Turn-by-Turn Logic & Tripper Mapping
-  // -----------------------------------------------------------
-  // Maps OSRM turn maneuvers to Tripper enum:
-  // 0 = Straight, 1 = Left, 2 = Right, 3 = U-Turn, 4 = Roundabout
-  function mapManeuverToTripper(maneuver) {
-    const type = maneuver.type;
-    const modifier = maneuver.modifier || "";
-
-    if (type.includes("roundabout") || type.includes("rotary")) return 4;
-    if (modifier.includes("left")) return 1;
-    if (modifier.includes("right")) return 2;
-    if (modifier.includes("u-turn")) return 3;
-    return 0; // Default straight
-  }
-
-  function evaluateNavigation() {
-    if (!routeSteps || routeSteps.length === 0 || currentStepIdx >= routeSteps.length) return;
-
-    const step = routeSteps[currentStepIdx];
-    const stepTargetCoord = step.maneuver.location; // [lon, lat]
-    
-    // Distance from user to the next turn maneuver point
-    const distMeters = Math.round(getDistanceMeters(userLat, userLon, stepTargetCoord[1], stepTargetCoord[0]));
-
-    // If within 25 meters of the turn point, advance to next maneuver
-    if (distMeters < 25 && currentStepIdx < routeSteps.length - 1) {
-      currentStepIdx++;
-    }
-
-    const activeStep = routeSteps[currentStepIdx];
-    const turnType = mapManeuverToTripper(activeStep.maneuver);
-    const roadName = activeStep.name || "Next Street";
-    const initDist = Math.round(activeStep.distance) || distMeters;
-
-    // Remaining total trip distance calculation
-    let remDistMeters = distMeters;
-    for (let i = currentStepIdx + 1; i < routeSteps.length; i++) {
-      remDistMeters += routeSteps[i].distance;
-    }
-    const remKm = (remDistMeters / 1000.0).toFixed(1);
-
-    // Update UI HUD
-    document.getElementById("turnText").textContent = `${activeStep.maneuver.instruction || roadName}`;
-    document.getElementById("distText").textContent = `${distMeters} m`;
-    document.getElementById("remDistText").textContent = `${remKm} km`;
-
-    // Construct Tripper protocol packet and stream via BLE
-    const now = new Date();
-    const payload = `NAV,${turnType},${distMeters},${initDist},${remKm},${totalTripKm},${now.getHours()},${now.getMinutes()},${roadName}\n`;
-    writeBLE(payload);
-  }
-
-  function getDistanceMeters(lat1, lon1, lat2, lon2) {
-    const R = 6371000;
-    const dLat = (lat2 - lat1) * Math.PI / 180;
-    const dLon = (lon2 - lon1) * Math.PI / 180;
-    const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
-              Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
-              Math.sin(dLon/2) * Math.sin(dLon/2);
-    return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
   }
 
   window.onload = initMap;
