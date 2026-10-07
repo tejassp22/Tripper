@@ -363,6 +363,11 @@
 </div>
 
 <script>
+  // Catch any unexpected runtime errors on screen
+  window.onerror = function(msg, url, line) {
+    alert("Script Error on Line " + line + ": " + msg);
+  };
+
   const SERVICE_UUID = "4fafc201-1fb5-459e-8fcc-c5c9c331914b";
   const CHARACTERISTIC_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a8";
 
@@ -372,9 +377,9 @@
   let speedLimitKmh = 60;
 
   function setBrightness(percent, btnEl) {
-    document.querySelectorAll('.btn-bri').forEach(b => b.classList.remove('active'));
+    document.querySelectorAll('.btn-bri').forEach(function(b) { b.classList.remove('active'); });
     if (btnEl) btnEl.classList.add('active');
-    writeBLE(`BRI,${percent}\n`);
+    writeBLE("BRI," + percent + "\n");
   }
 
   function updateLimit() {
@@ -405,7 +410,7 @@
 
     try {
       if (!navigator.bluetooth) {
-        alert("Web Bluetooth not available. Use Bluefy on iOS.");
+        alert("Web Bluetooth not found. Open inside Bluefy on iOS.");
         return;
       }
 
@@ -414,7 +419,7 @@
         optionalServices: [SERVICE_UUID]
       });
 
-      bleDevice.addEventListener('gattserverdisconnected', () => {
+      bleDevice.addEventListener('gattserverdisconnected', function() {
         document.getElementById("statusBadge").textContent = "DISCONNECTED";
         document.getElementById("statusBadge").classList.remove("connected");
         document.getElementById("btnConnect").textContent = "Connect BLE";
@@ -454,7 +459,7 @@
     lastWeatherCheck = now;
 
     try {
-      const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,precipitation,weather_code&hourly=precipitation_probability&forecast_days=1`;
+      const url = "https://api.open-meteo.com/v1/forecast?latitude=" + lat + "&longitude=" + lon + "&current=temperature_2m,precipitation,weather_code&hourly=precipitation_probability&forecast_days=1";
       const res = await fetch(url);
       const data = await res.json();
 
@@ -499,7 +504,7 @@
         const elapsedSec = Math.floor((Date.now() - tripStartTime) / 1000);
         const mm = String(Math.floor(elapsedSec / 60)).padStart(2, '0');
         const ss = String(elapsedSec % 60).padStart(2, '0');
-        document.getElementById("tripTimeVal").textContent = `${mm}:${ss}`;
+        document.getElementById("tripTimeVal").textContent = mm + ":" + ss;
       }
     }
   }
@@ -510,17 +515,17 @@
       return;
     }
 
-    let gpx = `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="Tripper">\n<trk>\n<name>Ride ${new Date().toLocaleDateString()}</name>\n<trkseg>\n`;
-    recordedGpxTrack.forEach(pt => {
-      gpx += `  <trkpt lat="${pt.lat}" lon="${pt.lon}"><time>${pt.time}</time><extensions><speed>${pt.speed}</speed></extensions></trkpt>\n`;
+    let gpx = '<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="Tripper">\n<trk>\n<name>Ride ' + new Date().toLocaleDateString() + '</name>\n<trkseg>\n';
+    recordedGpxTrack.forEach(function(pt) {
+      gpx += '  <trkpt lat="' + pt.lat + '" lon="' + pt.lon + '"><time>' + pt.time + '</time><extensions><speed>' + pt.speed + '</speed></extensions></trkpt>\n';
     });
-    gpx += `</trkseg>\n</trk>\n</gpx>`;
+    gpx += '</trkseg>\n</trk>\n</gpx>';
 
     const blob = new Blob([gpx], { type: 'application/gpx+xml' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
-    a.download = `Ride_${Date.now()}.gpx`;
+    a.download = "Ride_" + Date.now() + ".gpx";
     a.click();
     URL.revokeObjectURL(url);
   }
@@ -555,8 +560,9 @@
         selectDestination(e.latlng.lat, e.latlng.lng, "Pinned Location");
       });
 
-      // Force Leaflet to re-calculate container size to prevent blank map
-      setTimeout(() => { if (map) map.invalidateSize(); }, 300);
+      setTimeout(function() {
+        if (map) map.invalidateSize();
+      }, 400);
     } catch (e) {
       console.error("Map init error:", e);
     }
@@ -570,7 +576,7 @@
     const list = document.getElementById("suggestions");
     if (!input || !list) return;
 
-    input.addEventListener("input", () => {
+    input.addEventListener("input", function() {
       clearTimeout(searchDebounce);
       const query = input.value.trim();
       if (query.length < 3) {
@@ -578,9 +584,9 @@
         return;
       }
 
-      searchDebounce = setTimeout(async () => {
+      searchDebounce = setTimeout(async function() {
         try {
-          const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=5`;
+          const url = "https://nominatim.openstreetmap.org/search?format=json&q=" + encodeURIComponent(query) + "&limit=5";
           const res = await fetch(url);
           const data = await res.json();
           renderSuggestions(data);
@@ -590,7 +596,7 @@
       }, 400);
     });
 
-    document.addEventListener("click", (e) => {
+    document.addEventListener("click", function(e) {
       if (!e.target.closest('.search-container')) {
         list.style.display = "none";
       }
@@ -605,11 +611,11 @@
       return;
     }
 
-    items.forEach(item => {
+    items.forEach(function(item) {
       const div = document.createElement("div");
       div.className = "suggestion-item";
       div.textContent = item.display_name;
-      div.onclick = () => {
+      div.onclick = function() {
         document.getElementById("searchInput").value = item.display_name.split(',')[0];
         list.style.display = "none";
         selectDestination(parseFloat(item.lat), parseFloat(item.lon), item.display_name.split(',')[0]);
@@ -623,16 +629,16 @@
   function handleManualSearch() {
     const query = document.getElementById("searchInput").value.trim();
     if (!query) return;
-    fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=1`)
-      .then(r => r.json())
-      .then(data => {
+    fetch("https://nominatim.openstreetmap.org/search?format=json&q=" + encodeURIComponent(query) + "&limit=1")
+      .then(function(r) { return r.json(); })
+      .then(function(data) {
         if (data && data.length > 0) {
           selectDestination(parseFloat(data[0].lat), parseFloat(data[0].lon), data[0].display_name.split(',')[0]);
         } else {
           alert("Location not found.");
         }
       })
-      .catch(err => alert("Search failed: " + err.message));
+      .catch(function(err) { alert("Search failed: " + err.message); });
   }
 
   async function selectDestination(lat, lon, label) {
@@ -645,7 +651,7 @@
 
     document.getElementById("turnText").textContent = "Calculating route...";
 
-    const url = `https://router.project-osrm.org/route/v1/driving/${userLon},${userLat};${lon},${lat}?overview=full&geometries=geojson&steps=true`;
+    const url = "https://router.project-osrm.org/route/v1/driving/" + userLon + "," + userLat + ";" + lon + "," + lat + "?overview=full&geometries=geojson&steps=true";
 
     try {
       const res = await fetch(url);
@@ -669,8 +675,8 @@
       }
 
       document.getElementById("navControlRow").style.display = "flex";
-      document.getElementById("turnText").textContent = `Route Ready (${totalTripKm} km)`;
-      document.getElementById("remDistText").textContent = `${totalTripKm} km`;
+      document.getElementById("turnText").textContent = "Route Ready (" + totalTripKm + " km)";
+      document.getElementById("remDistText").textContent = totalTripKm + " km";
     } catch (err) {
       alert("Routing error: " + err.message);
     }
@@ -706,7 +712,7 @@
 
     const durationMin = tripStartTime ? Math.max(1, Math.round((Date.now() - tripStartTime) / 60000)) : 1;
     const avg = speedSamples > 0 ? Math.round(speedSum / speedSamples) : 0;
-    const sumPacket = `SUM,${totalTripKm},${durationMin},${topSpeedKmh},${avg},${ambientTemp}\n`;
+    const sumPacket = "SUM," + totalTripKm + "," + durationMin + "," + topSpeedKmh + "," + avg + "," + ambientTemp + "\n";
     writeBLE(sumPacket);
   }
 
@@ -728,7 +734,7 @@
     if (!navigator.geolocation) return;
 
     navigator.geolocation.watchPosition(
-      (pos) => {
+      function(pos) {
         userLat = pos.coords.latitude;
         userLon = pos.coords.longitude;
         const currentTime = Date.now();
@@ -744,7 +750,7 @@
             const distM = getDistanceMeters(lastGpsLat, lastGpsLon, userLat, userLon);
             if (distM >= 1.2) {
               calculatedSpeed = Math.round((distM / timeDeltaSec) * 3.6);
-              writeBLE(`ODO,${distM.toFixed(1)}\n`);
+              writeBLE("ODO," + distM.toFixed(1) + "\n");
             }
           }
         }
@@ -791,7 +797,7 @@
           }
         }
       },
-      (err) => console.warn("GPS error:", err),
+      function(err) { console.warn("GPS error:", err); },
       { enableHighAccuracy: true, maximumAge: 1000, timeout: 10000 }
     );
   }
@@ -807,19 +813,20 @@
     const type = maneuver.type || "";
     const modifier = maneuver.modifier || "";
 
-    if (type.includes("roundabout") || type.includes("rotary")) return 4;
-    if (modifier.includes("left")) return 1;
-    if (modifier.includes("right")) return 2;
-    if (modifier.includes("u-turn")) return 3;
+    if (type.indexOf("roundabout") >= 0 || type.indexOf("rotary") >= 0) return 4;
+    if (modifier.indexOf("left") >= 0) return 1;
+    if (modifier.indexOf("right") >= 0) return 2;
+    if (modifier.indexOf("u-turn") >= 0) return 3;
     return 0;
   }
 
-  function evaluateNavigation(forcePush = false) {
+  function evaluateNavigation(forcePush) {
+    if (typeof forcePush === 'undefined') forcePush = false;
     const now = new Date();
 
     if (!isNavigating) {
       if (forcePush && navCharacteristic) {
-        const payload = `SPD,${liveSpeedKmh},${speedLimitKmh},${now.getHours()},${now.getMinutes()},${currentThemeMode},${ambientTemp},${rainActive}\n`;
+        const payload = "SPD," + liveSpeedKmh + "," + speedLimitKmh + "," + now.getHours() + "," + now.getMinutes() + "," + currentThemeMode + "," + ambientTemp + "," + rainActive + "\n";
         writeBLE(payload);
       }
       return;
@@ -844,16 +851,17 @@
     const initDist = Math.round(activeStep.distance) || distMeters;
 
     let remDistMeters = distMeters;
+    // FIXED: Uses 'let' instead of 'int'
     for (let i = currentStepIdx + 1; i < routeSteps.length; i++) {
       remDistMeters += routeSteps[i].distance;
     }
     const remKm = (remDistMeters / 1000.0).toFixed(1);
 
     document.getElementById("turnText").textContent = activeStep.maneuver.instruction || cleanRoad;
-    document.getElementById("distText").textContent = `${distMeters} m`;
-    document.getElementById("remDistText").textContent = `${remKm} km`;
+    document.getElementById("distText").textContent = distMeters + " m";
+    document.getElementById("remDistText").textContent = remKm + " km";
 
-    const payload = `NAV,${turnType},${distMeters},${initDist},${remKm},${totalTripKm},${now.getHours()},${now.getMinutes()},${currentThemeMode},${liveSpeedKmh},${speedLimitKmh},${ambientTemp},${rainActive},${cleanRoad}\n`;
+    const payload = "NAV," + turnType + "," + distMeters + "," + initDist + "," + remKm + "," + totalTripKm + "," + now.getHours() + "," + now.getMinutes() + "," + currentThemeMode + "," + liveSpeedKmh + "," + speedLimitKmh + "," + ambientTemp + "," + rainActive + "," + cleanRoad + "\n";
     writeBLE(payload);
   }
 
@@ -867,12 +875,7 @@
     return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
   }
 
-  // Ensure DOM is fully parsed before firing Leaflet
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', initMap);
-  } else {
-    initMap();
-  }
+  window.addEventListener('DOMContentLoaded', initMap);
 </script>
 
 </body>
