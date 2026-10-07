@@ -3,9 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>Tripper Navigator v3</title>
+  <title>Tripper Navigator</title>
 
-  <!-- High-reliability Cloudflare CDN for Leaflet -->
+  <!-- Leaflet CDN -->
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
   <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 
@@ -43,15 +43,20 @@
       align-items: center;
     }
     h1 {
-      font-size: 1.1rem;
+      font-size: 1.05rem;
       margin: 0;
       text-transform: uppercase;
       letter-spacing: 1px;
     }
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
     .status-badge {
-      font-size: 0.75rem;
+      font-size: 0.72rem;
       font-weight: 600;
-      padding: 5px 12px;
+      padding: 4px 10px;
       border-radius: 12px;
       background: #21262d;
       color: var(--text-dim);
@@ -60,14 +65,40 @@
       background: #093c1d;
       color: var(--accent-green);
     }
-    #diagLog {
-      background: #000;
-      border: 1px solid #333;
-      border-radius: 6px;
-      padding: 6px 10px;
-      font-family: monospace;
-      font-size: 0.72rem;
-      color: #ffca28;
+    .btn-theme {
+      background: #21262d;
+      color: #fff;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 4px 10px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .telemetry-row {
+      display: flex;
+      gap: 8px;
+    }
+    .telemetry-card {
+      flex: 1;
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 8px 12px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    .telemetry-label {
+      font-size: 0.68rem;
+      text-transform: uppercase;
+      color: var(--text-dim);
+      font-weight: 700;
+    }
+    .telemetry-value {
+      font-size: 1.3rem;
+      font-weight: 800;
+      color: var(--accent-green);
     }
     .search-container {
       position: relative;
@@ -120,7 +151,7 @@
     }
     #map {
       width: 100%;
-      height: 340px;
+      height: 320px;
       border-radius: 12px;
       border: 1px solid var(--border);
       z-index: 1;
@@ -130,10 +161,10 @@
       background: var(--card);
       border: 1px solid var(--border);
       border-radius: 12px;
-      padding: 14px;
+      padding: 12px;
       display: flex;
       flex-direction: column;
-      gap: 8px;
+      gap: 6px;
     }
     .nav-instruction {
       font-size: 1.05rem;
@@ -141,7 +172,7 @@
       color: var(--text);
     }
     .nav-meta {
-      font-size: 0.85rem;
+      font-size: 0.82rem;
       color: var(--text-dim);
     }
     .nav-meta b {
@@ -178,17 +209,31 @@
 
 <div class="container">
   <header>
-    <h1>Tripper Map v3</h1>
-    <div id="statusBadge" class="status-badge">DISCONNECTED</div>
+    <h1>Tejas's Hunter 350</h1>
+    <div class="header-actions">
+      <button id="btnThemeToggle" class="btn-theme" onclick="toggleTheme()">☀️ Day</button>
+      <div id="statusBadge" class="status-badge">DISCONNECTED</div>
+    </div>
   </header>
 
-  <div id="diagLog">System: Initializing...</div>
+  <!-- Live Telemetry Badges -->
+  <div class="telemetry-row">
+    <div class="telemetry-card">
+      <div class="telemetry-label">Live Speed</div>
+      <div class="telemetry-value"><span id="speedVal">0</span> <small style="font-size:0.75rem; color:var(--text-dim);">km/h</small></div>
+    </div>
+    <div class="telemetry-card">
+      <div class="telemetry-label">Status</div>
+      <div class="telemetry-value" id="statusVal" style="font-size: 1rem; padding-top: 4px; color: var(--accent-blue);">Idle</div>
+    </div>
+  </div>
 
   <div class="row">
     <button id="btnConnect" onclick="toggleConnection()">Connect BLE</button>
     <button class="secondary" onclick="centerOnUser()">My Location</button>
   </div>
 
+  <!-- Search Input -->
   <div class="search-container">
     <div class="search-box">
       <input type="text" id="searchInput" class="search-input" placeholder="Search destination or tap map..." autocomplete="off">
@@ -197,15 +242,18 @@
     <button class="secondary" style="flex: 0 0 75px;" onclick="handleManualSearch()">Search</button>
   </div>
 
+  <!-- Map -->
   <div id="map"></div>
 
+  <!-- Route Actions -->
   <div class="row" id="navControlRow" style="display: none;">
     <button id="btnStartNav" class="start-nav" onclick="startNavigation()">Start Navigation</button>
     <button class="secondary" onclick="cancelRoute()">Clear</button>
   </div>
 
+  <!-- HUD -->
   <div class="card">
-    <div class="nav-instruction" id="turnText">Search or tap destination on map</div>
+    <div class="nav-instruction" id="turnText">Speedo Idle Mode (Ride Safe)</div>
     <div class="nav-meta">
       Next Turn: <b id="distText">-- m</b> | Remaining: <b id="remDistText">-- km</b>
     </div>
@@ -213,23 +261,24 @@
 </div>
 
 <script>
-  function logMsg(msg) {
-    const el = document.getElementById("diagLog");
-    if (el) el.textContent = msg;
-    console.log(msg);
-  }
-
   // ===========================================================
-  // 1. ISOLATED BLUETOOTH ENGINE
+  // BLE & STATE ENGINE
   // ===========================================================
   const SERVICE_UUID = "4fafc201-1fb5-459e-8fcc-c5c9c331914b";
   const CHARACTERISTIC_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a8";
 
   let bleDevice = null;
   let navCharacteristic = null;
+  let currentThemeMode = 0; // 0 = Day/White, 1 = Night/Black
+  let liveSpeedKmh = 0;
+
+  function toggleTheme() {
+    currentThemeMode = currentThemeMode === 0 ? 1 : 0;
+    document.getElementById("btnThemeToggle").textContent = currentThemeMode === 0 ? "☀️ Day" : "🌙 Night";
+    evaluateNavigation(true);
+  }
 
   async function toggleConnection() {
-    logMsg("BLE: Opening request window...");
     if (bleDevice && bleDevice.gatt && bleDevice.gatt.connected) {
       bleDevice.gatt.disconnect();
       return;
@@ -237,8 +286,7 @@
 
     try {
       if (!navigator.bluetooth) {
-        alert("Web Bluetooth not found. Make sure you are using the Bluefy app on iOS.");
-        logMsg("BLE Error: navigator.bluetooth missing");
+        alert("Web Bluetooth not found. Open this in Bluefy on iOS.");
         return;
       }
 
@@ -247,29 +295,22 @@
         optionalServices: [SERVICE_UUID]
       });
 
-      logMsg("BLE: Connecting to " + (bleDevice.name || "Device") + "...");
-
       bleDevice.addEventListener('gattserverdisconnected', () => {
-        const badge = document.getElementById("statusBadge");
-        const btn = document.getElementById("btnConnect");
-        badge.textContent = "DISCONNECTED";
-        badge.classList.remove("connected");
-        btn.textContent = "Connect BLE";
-        logMsg("BLE: Disconnected");
+        document.getElementById("statusBadge").textContent = "DISCONNECTED";
+        document.getElementById("statusBadge").classList.remove("connected");
+        document.getElementById("btnConnect").textContent = "Connect BLE";
       });
 
       const server = await bleDevice.gatt.connect();
       const service = await server.getPrimaryService(SERVICE_UUID);
       navCharacteristic = await service.getCharacteristic(CHARACTERISTIC_UUID);
 
-      const badge = document.getElementById("statusBadge");
-      const btn = document.getElementById("btnConnect");
-      badge.textContent = "CONNECTED";
-      badge.classList.add("connected");
-      btn.textContent = "Disconnect";
-      logMsg("BLE: Connected & Ready!");
+      document.getElementById("statusBadge").textContent = "CONNECTED";
+      document.getElementById("statusBadge").classList.add("connected");
+      document.getElementById("btnConnect").textContent = "Disconnect";
+
+      evaluateNavigation(true);
     } catch (err) {
-      logMsg("BLE Error: " + err.message);
       alert("BLE Error: " + err.message);
     }
   }
@@ -285,7 +326,7 @@
   }
 
   // ===========================================================
-  // 2. MAP & NAVIGATION ENGINE
+  // MAP, SEARCH & GPS ENGINE
   // ===========================================================
   let map, userMarker, destMarker, routeLine;
   let userLat = null, userLon = null;
@@ -298,33 +339,23 @@
   let searchDebounce = null;
 
   function initMap() {
-    try {
-      if (typeof L === 'undefined') {
-        logMsg("Map Error: Leaflet library failed to load");
+    map = L.map('map', { zoomControl: false }).setView([19.0760, 72.8777], 13);
+
+    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: '© OpenStreetMap'
+    }).addTo(map);
+
+    map.on('click', function(e) {
+      if (!userLat || !userLon) {
+        alert("Waiting for GPS position lock...");
         return;
       }
+      selectDestination(e.latlng.lat, e.latlng.lng, "Pinned Location");
+    });
 
-      map = L.map('map', { zoomControl: false }).setView([19.0760, 72.8777], 13);
-
-      L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-        maxZoom: 19,
-        attribution: '© OpenStreetMap'
-      }).addTo(map);
-
-      map.on('click', function(e) {
-        if (!userLat || !userLon) {
-          alert("Waiting for GPS position lock...");
-          return;
-        }
-        selectDestination(e.latlng.lat, e.latlng.lng, "Pinned Location");
-      });
-
-      setupSearch();
-      startGpsTracking();
-      logMsg("System: Map & GPS Initialized");
-    } catch (e) {
-      logMsg("Map Init Exception: " + e.message);
-    }
+    setupSearch();
+    startGpsTracking();
   }
 
   function setupSearch() {
@@ -430,7 +461,6 @@
       document.getElementById("navControlRow").style.display = "flex";
       document.getElementById("turnText").textContent = `Route Ready (${totalTripKm} km)`;
       document.getElementById("remDistText").textContent = `${totalTripKm} km`;
-      logMsg(`Route: ${totalTripKm} km ready`);
     } catch (err) {
       alert("Routing error: " + err.message);
     }
@@ -442,6 +472,8 @@
     btn.textContent = "Stop Navigation";
     btn.className = "stop-nav";
     btn.onclick = stopNavigation;
+    document.getElementById("statusVal").textContent = "Navigating";
+    document.getElementById("statusVal").style.color = "var(--accent-green)";
 
     centerOnUser();
     evaluateNavigation();
@@ -453,7 +485,12 @@
     btn.textContent = "Start Navigation";
     btn.className = "start-nav";
     btn.onclick = startNavigation;
-    document.getElementById("turnText").textContent = "Navigation Paused";
+    document.getElementById("statusVal").textContent = "Idle";
+    document.getElementById("statusVal").style.color = "var(--accent-blue)";
+    document.getElementById("turnText").textContent = "Speedo Idle Mode (Ride Safe)";
+    
+    // Send immediate idle speed packet
+    evaluateNavigation(true);
   }
 
   function cancelRoute() {
@@ -462,7 +499,6 @@
     if (routeLine) map.removeLayer(routeLine);
     routeSteps = [];
     document.getElementById("navControlRow").style.display = "none";
-    document.getElementById("turnText").textContent = "Search or tap destination on map";
     document.getElementById("distText").textContent = "-- m";
     document.getElementById("remDistText").textContent = "-- km";
   }
@@ -474,6 +510,11 @@
       (pos) => {
         userLat = pos.coords.latitude;
         userLon = pos.coords.longitude;
+        
+        // Calculate speed in km/h
+        const rawSpeed = pos.coords.speed;
+        liveSpeedKmh = (rawSpeed && rawSpeed > 0.5) ? Math.round(rawSpeed * 3.6) : 0;
+        document.getElementById("speedVal").textContent = liveSpeedKmh;
 
         if (!userMarker) {
           userMarker = L.circleMarker([userLat, userLon], {
@@ -492,9 +533,12 @@
         if (isNavigating) {
           map.setView([userLat, userLon]);
           evaluateNavigation();
+        } else {
+          // Stream live speed to idle dashboard every GPS tick
+          evaluateNavigation(true);
         }
       },
-      (err) => logMsg("GPS Warning: " + err.message),
+      (err) => console.warn(err),
       { enableHighAccuracy: true, maximumAge: 1000 }
     );
   }
@@ -516,8 +560,19 @@
     return 0;
   }
 
-  function evaluateNavigation() {
-    if (!isNavigating || !routeSteps || routeSteps.length === 0 || currentStepIdx >= routeSteps.length) return;
+  function evaluateNavigation(forcePush = false) {
+    const now = new Date();
+
+    if (!isNavigating) {
+      // Send Idle Speed Packet: SPD,<speed>,<hr>,<min>,<theme>
+      if (forcePush && navCharacteristic) {
+        const payload = `SPD,${liveSpeedKmh},${now.getHours()},${now.getMinutes()},${currentThemeMode}\n`;
+        writeBLE(payload);
+      }
+      return;
+    }
+
+    if (!routeSteps || routeSteps.length === 0 || currentStepIdx >= routeSteps.length) return;
 
     const step = routeSteps[currentStepIdx];
     const stepTargetCoord = step.maneuver.location;
@@ -529,7 +584,10 @@
 
     const activeStep = routeSteps[currentStepIdx];
     const turnType = mapManeuverToTripper(activeStep.maneuver);
-    const roadName = activeStep.name || targetName || "Road";
+    
+    let cleanRoad = (activeStep.name || targetName || "Road").split(',')[0].trim();
+    if (cleanRoad.length > 18) cleanRoad = cleanRoad.substring(0, 18);
+
     const initDist = Math.round(activeStep.distance) || distMeters;
 
     let remDistMeters = distMeters;
@@ -538,12 +596,12 @@
     }
     const remKm = (remDistMeters / 1000.0).toFixed(1);
 
-    document.getElementById("turnText").textContent = activeStep.maneuver.instruction || roadName;
+    document.getElementById("turnText").textContent = activeStep.maneuver.instruction || cleanRoad;
     document.getElementById("distText").textContent = `${distMeters} m`;
     document.getElementById("remDistText").textContent = `${remKm} km`;
 
-    const now = new Date();
-    const payload = `NAV,${turnType},${distMeters},${initDist},${remKm},${totalTripKm},${now.getHours()},${now.getMinutes()},${roadName}\n`;
+    // NAV Protocol: NAV,<turn>,<stepDist>,<initDist>,<remKm>,<totKm>,<hr>,<min>,<theme>,<speed>,<road>
+    const payload = `NAV,${turnType},${distMeters},${initDist},${remKm},${totalTripKm},${now.getHours()},${now.getMinutes()},${currentThemeMode},${liveSpeedKmh},${cleanRoad}\n`;
     writeBLE(payload);
   }
 
