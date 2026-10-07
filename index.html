@@ -139,7 +139,6 @@
       cursor: pointer;
     }
 
-    /* Brightness Controls */
     .bri-strip {
       background: var(--card);
       border: 1px solid var(--border);
@@ -356,7 +355,7 @@
   </div>
 
   <div class="card">
-    <div class="nav-instruction" id="turnText">Speedo & ODO Rotation Active</div>
+    <div class="nav-instruction" id="turnText">Speedo & ODO Ready</div>
     <div class="nav-meta">
       Next Turn: <b id="distText">-- m</b> | Remaining: <b id="remDistText">-- km</b>
     </div>
@@ -364,9 +363,6 @@
 </div>
 
 <script>
-  // ===========================================================
-  // 1. BLUETOOTH & STATE ENGINE
-  // ===========================================================
   const SERVICE_UUID = "4fafc201-1fb5-459e-8fcc-c5c9c331914b";
   const CHARACTERISTIC_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a8";
 
@@ -409,7 +405,7 @@
 
     try {
       if (!navigator.bluetooth) {
-        alert("Web Bluetooth not found. Open in Bluefy on iOS.");
+        alert("Web Bluetooth not available. Use Bluefy on iOS.");
         return;
       }
 
@@ -448,9 +444,6 @@
     }
   }
 
-  // ===========================================================
-  // 2. LIVE WEATHER & RAIN CHECK (Open-Meteo)
-  // ===========================================================
   let ambientTemp = 28;
   let rainActive = 0;
   let lastWeatherCheck = 0;
@@ -477,13 +470,10 @@
         rainActive = (currentRain || rainProb >= 40) ? 1 : 0;
       }
     } catch (e) {
-      console.warn("Weather fetch error", e);
+      console.warn("Weather error", e);
     }
   }
 
-  // ===========================================================
-  // 3. TRIP TELEMETRY & GPX RECORDER
-  // ===========================================================
   let liveSpeedKmh = 0;
   let topSpeedKmh = 0;
   let speedSum = 0;
@@ -516,11 +506,11 @@
 
   function exportGPX() {
     if (recordedGpxTrack.length === 0) {
-      alert("No recorded ride points available!");
+      alert("No recorded track points available!");
       return;
     }
 
-    let gpx = `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="Tripper-Hunter350">\n<trk>\n<name>Hunter 350 Ride - ${new Date().toLocaleDateString()}</name>\n<trkseg>\n`;
+    let gpx = `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="Tripper">\n<trk>\n<name>Ride ${new Date().toLocaleDateString()}</name>\n<trkseg>\n`;
     recordedGpxTrack.forEach(pt => {
       gpx += `  <trkpt lat="${pt.lat}" lon="${pt.lon}"><time>${pt.time}</time><extensions><speed>${pt.speed}</speed></extensions></trkpt>\n`;
     });
@@ -535,10 +525,7 @@
     URL.revokeObjectURL(url);
   }
 
-  // ===========================================================
-  // 4. MAP, SEARCH & NAVIGATION ENGINE
-  // ===========================================================
-  let map, userMarker, destMarker, routeLine;
+  let map = null, userMarker = null, destMarker = null, routeLine = null;
   let userLat = null, userLon = null;
   let targetLat = null, targetLon = null, targetName = "Destination";
 
@@ -549,20 +536,30 @@
   let searchDebounce = null;
 
   function initMap() {
-    map = L.map('map', { zoomControl: false }).setView([19.0760, 72.8777], 13);
+    try {
+      const mapContainer = document.getElementById('map');
+      if (!mapContainer || typeof L === 'undefined') return;
 
-    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      maxZoom: 19,
-      attribution: '© OpenStreetMap'
-    }).addTo(map);
+      map = L.map('map', { zoomControl: false }).setView([19.0760, 72.8777], 13);
 
-    map.on('click', function(e) {
-      if (!userLat || !userLon) {
-        alert("Waiting for GPS position lock...");
-        return;
-      }
-      selectDestination(e.latlng.lat, e.latlng.lng, "Pinned Location");
-    });
+      L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        attribution: '© OpenStreetMap'
+      }).addTo(map);
+
+      map.on('click', function(e) {
+        if (!userLat || !userLon) {
+          alert("Waiting for GPS position lock...");
+          return;
+        }
+        selectDestination(e.latlng.lat, e.latlng.lng, "Pinned Location");
+      });
+
+      // Force Leaflet to re-calculate container size to prevent blank map
+      setTimeout(() => { if (map) map.invalidateSize(); }, 300);
+    } catch (e) {
+      console.error("Map init error:", e);
+    }
 
     setupSearch();
     startGpsTracking();
@@ -571,6 +568,7 @@
   function setupSearch() {
     const input = document.getElementById("searchInput");
     const list = document.getElementById("suggestions");
+    if (!input || !list) return;
 
     input.addEventListener("input", () => {
       clearTimeout(searchDebounce);
@@ -633,7 +631,8 @@
         } else {
           alert("Location not found.");
         }
-      });
+      })
+      .catch(err => alert("Search failed: " + err.message));
   }
 
   async function selectDestination(lat, lon, label) {
@@ -641,8 +640,8 @@
     targetLon = lon;
     targetName = label;
 
-    if (destMarker) map.removeLayer(destMarker);
-    destMarker = L.marker([lat, lon]).addTo(map).bindPopup(label).openPopup();
+    if (destMarker && map) map.removeLayer(destMarker);
+    if (map) destMarker = L.marker([lat, lon]).addTo(map).bindPopup(label).openPopup();
 
     document.getElementById("turnText").textContent = "Calculating route...";
 
@@ -661,12 +660,13 @@
       routeSteps = route.legs[0].steps;
       currentStepIdx = 0;
 
-      if (routeLine) map.removeLayer(routeLine);
-      routeLine = L.geoJSON(route.geometry, {
-        style: { color: '#00e676', weight: 6, opacity: 0.9 }
-      }).addTo(map);
-
-      map.fitBounds(routeLine.getBounds(), { padding: [50, 50] });
+      if (routeLine && map) map.removeLayer(routeLine);
+      if (map) {
+        routeLine = L.geoJSON(route.geometry, {
+          style: { color: '#00e676', weight: 6, opacity: 0.9 }
+        }).addTo(map);
+        map.fitBounds(routeLine.getBounds(), { padding: [50, 50] });
+      }
 
       document.getElementById("navControlRow").style.display = "flex";
       document.getElementById("turnText").textContent = `Route Ready (${totalTripKm} km)`;
@@ -700,7 +700,7 @@
     btn.textContent = "Start Navigation";
     btn.className = "start-nav";
     btn.onclick = startNavigation;
-    document.getElementById("turnText").textContent = "Speedo & ODO Rotation Active";
+    document.getElementById("turnText").textContent = "Speedo & ODO Ready";
 
     document.getElementById("gpxRow").style.display = "flex";
 
@@ -712,8 +712,8 @@
 
   function cancelRoute() {
     stopNavigation();
-    if (destMarker) map.removeLayer(destMarker);
-    if (routeLine) map.removeLayer(routeLine);
+    if (destMarker && map) map.removeLayer(destMarker);
+    if (routeLine && map) map.removeLayer(routeLine);
     routeSteps = [];
     document.getElementById("navControlRow").style.display = "none";
     document.getElementById("distText").textContent = "-- m";
@@ -768,40 +768,43 @@
 
         fetchLiveWeather(userLat, userLon);
 
-        if (!userMarker) {
-          userMarker = L.circleMarker([userLat, userLon], {
-            radius: 8,
-            fillColor: "#2979ff",
-            color: "#ffffff",
-            weight: 2,
-            opacity: 1,
-            fillOpacity: 1.0
-          }).addTo(map);
-          map.setView([userLat, userLon], 15);
-        } else {
-          userMarker.setLatLng([userLat, userLon]);
-        }
+        if (map) {
+          if (!userMarker) {
+            userMarker = L.circleMarker([userLat, userLon], {
+              radius: 8,
+              fillColor: "#2979ff",
+              color: "#ffffff",
+              weight: 2,
+              opacity: 1,
+              fillOpacity: 1.0
+            }).addTo(map);
+            map.setView([userLat, userLon], 15);
+          } else {
+            userMarker.setLatLng([userLat, userLon]);
+          }
 
-        if (isNavigating) {
-          map.setView([userLat, userLon]);
-          evaluateNavigation();
-        } else {
-          evaluateNavigation(true);
+          if (isNavigating) {
+            map.setView([userLat, userLon]);
+            evaluateNavigation();
+          } else {
+            evaluateNavigation(true);
+          }
         }
       },
-      (err) => console.warn(err),
-      { enableHighAccuracy: true, maximumAge: 0, timeout: 10000 }
+      (err) => console.warn("GPS error:", err),
+      { enableHighAccuracy: true, maximumAge: 1000, timeout: 10000 }
     );
   }
 
   function centerOnUser() {
     if (userLat && userLon && map) {
       map.setView([userLat, userLon], 16);
+      map.invalidateSize();
     }
   }
 
   function mapManeuverToTripper(maneuver) {
-    const type = maneuver.type;
+    const type = maneuver.type || "";
     const modifier = maneuver.modifier || "";
 
     if (type.includes("roundabout") || type.includes("rotary")) return 4;
@@ -841,7 +844,7 @@
     const initDist = Math.round(activeStep.distance) || distMeters;
 
     let remDistMeters = distMeters;
-    for (int i = currentStepIdx + 1; i < routeSteps.length; i++) {
+    for (let i = currentStepIdx + 1; i < routeSteps.length; i++) {
       remDistMeters += routeSteps[i].distance;
     }
     const remKm = (remDistMeters / 1000.0).toFixed(1);
@@ -864,9 +867,12 @@
     return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
   }
 
-  window.addEventListener('load', () => {
+  // Ensure DOM is fully parsed before firing Leaflet
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initMap);
+  } else {
     initMap();
-  });
+  }
 </script>
 
 </body>
