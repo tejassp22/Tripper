@@ -3,9 +3,9 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>Tripper Lifetime Free Navigator</title>
+  <title>Tripper Navigator</title>
 
-  <!-- Leaflet CSS & JS -->
+  <!-- Leaflet CDN -->
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
@@ -36,7 +36,6 @@
       display: flex;
       flex-direction: column;
       gap: 10px;
-      position: relative;
     }
     header {
       display: flex;
@@ -52,7 +51,7 @@
     .status-badge {
       font-size: 0.75rem;
       font-weight: 600;
-      padding: 4px 10px;
+      padding: 5px 12px;
       border-radius: 12px;
       background: #21262d;
       color: var(--text-dim);
@@ -62,7 +61,7 @@
       color: var(--accent-green);
     }
 
-    /* Precision Search Bar */
+    /* Search Bar */
     .search-container {
       position: relative;
       width: 100%;
@@ -82,7 +81,6 @@
       color: #fff;
       font-size: 0.95rem;
       outline: none;
-      box-shadow: 0 4px 12px rgba(0,0,0,0.4);
     }
     .search-input:focus {
       border-color: var(--accent-blue);
@@ -96,7 +94,7 @@
       border: 1px solid var(--border);
       border-radius: 8px;
       margin-top: 4px;
-      max-height: 240px;
+      max-height: 220px;
       overflow-y: auto;
       z-index: 1000;
       display: none;
@@ -109,17 +107,22 @@
       cursor: pointer;
       color: #c9d1d9;
     }
-    .suggestion-item:active, .suggestion-item:hover {
+    .suggestion-item:active {
       background: #21262d;
       color: #fff;
     }
 
+    /* Map Styling with Native Dark Filter */
     #map {
       width: 100%;
-      height: 380px;
+      height: 350px;
       border-radius: 12px;
       border: 1px solid var(--border);
       z-index: 1;
+      background: #111;
+    }
+    .dark-tiles {
+      filter: brightness(0.65) invert(1) contrast(2.5) hue-rotate(200deg) saturate(0.3) brightness(0.8);
     }
 
     .card {
@@ -186,12 +189,13 @@
   <!-- Search Input -->
   <div class="search-container">
     <div class="search-box">
-      <input type="text" id="searchInput" class="search-input" placeholder="Search destination (e.g. Bandra, Metro Station)..." autocomplete="off">
+      <input type="text" id="searchInput" class="search-input" placeholder="Search address or tap map..." autocomplete="off">
       <div id="suggestions" class="suggestions"></div>
     </div>
+    <button class="secondary" style="flex: 0 0 75px;" onclick="handleManualSearch()">Search</button>
   </div>
 
-  <!-- Precision High-Contrast Dark Map -->
+  <!-- High-Contrast Map -->
   <div id="map"></div>
 
   <!-- Route Actions -->
@@ -200,9 +204,9 @@
     <button class="secondary" onclick="cancelRoute()">Clear</button>
   </div>
 
-  <!-- Active Turn HUD -->
+  <!-- Turn HUD -->
   <div class="card">
-    <div class="nav-instruction" id="turnText">Search or tap destination</div>
+    <div class="nav-instruction" id="turnText">Search or tap destination on map</div>
     <div class="nav-meta">
       Next Turn: <b id="distText">-- m</b> | Remaining: <b id="remDistText">-- km</b>
     </div>
@@ -210,5 +214,109 @@
 </div>
 
 <script>
+  // ===========================================================
+  // 1. BLUETOOTH ENGINE (Protected & Independent)
+  // ===========================================================
   const SERVICE_UUID = "4fafc201-1fb5-459e-8fcc-c5c9c331914b";
-  const CHARACTERISTIC_UUID = "beb5483e-36e1-4688-b7
+  const CHARACTERISTIC_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a8";
+
+  let bleDevice = null;
+  let navCharacteristic = null;
+
+  async function toggleConnection() {
+    if (bleDevice && bleDevice.gatt && bleDevice.gatt.connected) {
+      bleDevice.gatt.disconnect();
+      return;
+    }
+
+    try {
+      if (!navigator.bluetooth) {
+        alert("Web Bluetooth not found. Open this page in the Bluefy app on iOS.");
+        return;
+      }
+
+      bleDevice = await navigator.bluetooth.requestDevice({
+        acceptAllDevices: true,
+        optionalServices: [SERVICE_UUID]
+      });
+
+      bleDevice.addEventListener('gattserverdisconnected', () => {
+        const badge = document.getElementById("statusBadge");
+        const btn = document.getElementById("btnConnect");
+        badge.textContent = "DISCONNECTED";
+        badge.classList.remove("connected");
+        btn.textContent = "Connect BLE";
+      });
+
+      const server = await bleDevice.gatt.connect();
+      const service = await server.getPrimaryService(SERVICE_UUID);
+      navCharacteristic = await service.getCharacteristic(CHARACTERISTIC_UUID);
+
+      const badge = document.getElementById("statusBadge");
+      const btn = document.getElementById("btnConnect");
+      badge.textContent = "CONNECTED";
+      badge.classList.add("connected");
+      btn.textContent = "Disconnect";
+    } catch (err) {
+      console.error(err);
+      alert("BLE Error: " + err.message);
+    }
+  }
+
+  async function writeBLE(rawString) {
+    if (!navCharacteristic) return;
+    try {
+      const encoder = new TextEncoder();
+      await navCharacteristic.writeValue(encoder.encode(rawString));
+    } catch (err) {
+      console.warn("BLE Write error:", err);
+    }
+  }
+
+  // ===========================================================
+  // 2. MAP & NAVIGATION ENGINE
+  // ===========================================================
+  let map, userMarker, destMarker, routeLine;
+  let userLat = null, userLon = null;
+  let targetLat = null, targetLon = null, targetName = "Destination";
+
+  let isNavigating = false;
+  let routeSteps = [];
+  let currentStepIdx = 0;
+  let totalTripKm = 0;
+  let searchDebounce = null;
+
+  function initMap() {
+    try {
+      map = L.map('map', { zoomControl: false }).setView([19.0760, 72.8777], 13);
+
+      // Official, 100% Free OpenStreetMap Tiles with Native Dark Dashboard Filter
+      L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+        maxZoom: 19,
+        className: 'dark-tiles',
+        attribution: '© OpenStreetMap'
+      }).addTo(map);
+
+      map.on('click', function(e) {
+        if (!userLat || !userLon) {
+          alert("Waiting for phone GPS position...");
+          return;
+        }
+        selectDestination(e.latlng.lat, e.latlng.lng, "Pinned Location");
+      });
+
+      setupSearch();
+      startGpsTracking();
+    } catch (e) {
+      console.error("Map initialization failed:", e);
+    }
+  }
+
+  function setupSearch() {
+    const input = document.getElementById("searchInput");
+    const list = document.getElementById("suggestions");
+
+    input.addEventListener("input", () => {
+      clearTimeout(searchDebounce);
+      const query = input.value.trim();
+      if (
