@@ -18,6 +18,7 @@
       --text: #f0f6fc;
       --text-dim: #8b949e;
       --border: #30363d;
+      --cyan: #00e5ff;
     }
     * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
     body {
@@ -74,7 +75,8 @@
       font-weight: 600;
       cursor: pointer;
     }
-    
+
+    /* Telemetry Grid */
     .telemetry-grid {
       display: grid;
       grid-template-columns: repeat(4, 1fr);
@@ -102,6 +104,56 @@
       margin-top: 2px;
     }
 
+    /* Lean Angle HUD Card */
+    .lean-card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 10px 14px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .lean-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    .lean-title {
+      font-size: 0.75rem;
+      font-weight: 700;
+      color: var(--cyan);
+      text-transform: uppercase;
+    }
+    .btn-calib {
+      background: #21262d;
+      color: var(--cyan);
+      border: 1px solid var(--cyan);
+      border-radius: 6px;
+      padding: 3px 8px;
+      font-size: 0.7rem;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .lean-metrics {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+    }
+    .lean-big {
+      font-size: 1.6rem;
+      font-weight: 800;
+      color: #fff;
+    }
+    .lean-sub {
+      font-size: 0.8rem;
+      color: var(--text-dim);
+    }
+    .lean-sub b {
+      color: var(--accent-green);
+    }
+
+    /* Controls Strip */
     .control-strip {
       background: var(--card);
       border: 1px solid var(--border);
@@ -163,7 +215,7 @@
       font-weight: 600;
       cursor: pointer;
     }
-    .btn-bri:active, .btn-bri.active {
+    .btn-bri.active {
       background: var(--accent-blue);
       color: #fff;
       border-color: var(--accent-blue);
@@ -189,9 +241,6 @@
       font-size: 0.95rem;
       outline: none;
     }
-    .search-input:focus {
-      border-color: var(--accent-blue);
-    }
     .suggestions {
       position: absolute;
       top: 100%;
@@ -214,13 +263,9 @@
       cursor: pointer;
       color: #c9d1d9;
     }
-    .suggestion-item:active {
-      background: #21262d;
-      color: #fff;
-    }
     #map {
       width: 100%;
-      height: 300px;
+      height: 260px;
       border-radius: 12px;
       border: 1px solid var(--border);
       z-index: 1;
@@ -262,20 +307,10 @@
       font-weight: 600;
       cursor: pointer;
     }
-    button:active { opacity: 0.8; }
     button.secondary { background: #21262d; border: 1px solid var(--border); }
-    button.start-nav {
-      background: var(--accent-green);
-      color: #000;
-      font-size: 1rem;
-    }
-    button.stop-nav {
-      background: #c62828;
-    }
-    button.gpx-btn {
-      background: #ff9800;
-      color: #000;
-    }
+    button.start-nav { background: var(--accent-green); color: #000; font-size: 1rem; }
+    button.stop-nav { background: #c62828; }
+    button.gpx-btn { background: #ff9800; color: #000; }
   </style>
 </head>
 <body>
@@ -309,6 +344,20 @@
     </div>
   </div>
 
+  <!-- Real-Time Lean Angle & G-Force HUD Card -->
+  <div class="lean-card">
+    <div class="lean-header">
+      <span class="lean-title">MotoGP Lean Telemetry</span>
+      <button class="btn-calib" onclick="tareLeanZero()">Tare Level (0°)</button>
+    </div>
+    <div class="lean-metrics">
+      <div class="lean-big"><span id="liveLeanVal">0°</span></div>
+      <div class="lean-sub">
+        Max L: <b id="maxLeanLeftVal">0°</b> | R: <b id="maxLeanRightVal">0°</b> | <b id="liveGVal">0.00 G</b>
+      </div>
+    </div>
+  </div>
+
   <!-- Overspeed Limit, Odometer Reset & Weather Strip -->
   <div class="control-strip">
     <div class="limit-control">
@@ -320,7 +369,7 @@
     <div>Weather: <b id="weatherTemp">--</b>°C</div>
   </div>
 
-  <!-- Screen Brightness Controls -->
+  <!-- Display Brightness -->
   <div class="bri-strip">
     <span style="color:var(--text-dim); font-weight:600;">Display Brightness:</span>
     <div class="bri-buttons">
@@ -332,7 +381,7 @@
 
   <div class="row">
     <button id="btnConnect" onclick="toggleConnection()">Connect BLE</button>
-    <button class="secondary" onclick="centerOnUser()">My Location</button>
+    <button class="secondary" onclick="enableSensors()">Enable Gyro</button>
   </div>
 
   <div class="search-container">
@@ -355,7 +404,7 @@
   </div>
 
   <div class="card">
-    <div class="nav-instruction" id="turnText">Speedo & ODO Ready</div>
+    <div class="nav-instruction" id="turnText">Speedo, ODO & Lean HUD Active</div>
     <div class="nav-meta">
       Next Turn: <b id="distText">-- m</b> | Remaining: <b id="remDistText">-- km</b>
     </div>
@@ -363,9 +412,8 @@
 </div>
 
 <script>
-  // Catch any unexpected runtime errors on screen
   window.onerror = function(msg, url, line) {
-    alert("Script Error on Line " + line + ": " + msg);
+    console.error("Script error:", msg, "Line:", line);
   };
 
   const SERVICE_UUID = "4fafc201-1fb5-459e-8fcc-c5c9c331914b";
@@ -375,6 +423,84 @@
   let navCharacteristic = null;
   let currentThemeMode = 0;
   let speedLimitKmh = 60;
+
+  // ===========================================================
+  // GYROSCOPE & LEAN TELEMETRY PIPELINE
+  // ===========================================================
+  let zeroCalibrationOffset = 0.0;
+  let currentRollAngle = 0;
+  let maxLeftAngle = 0;
+  let maxRightAngle = 0;
+  let currentLateralG = 0.0;
+  let lastGyroBleTime = 0;
+
+  function tareLeanZero() {
+    zeroCalibrationOffset = currentRollAngle + zeroCalibrationOffset;
+    maxLeftAngle = 0;
+    maxRightAngle = 0;
+    document.getElementById("maxLeanLeftVal").textContent = "0°";
+    document.getElementById("maxLeanRightVal").textContent = "0°";
+    alert("Bike Lean Level Calibrated to 0°!");
+  }
+
+  function enableSensors() {
+    if (typeof DeviceOrientationEvent !== 'undefined' && typeof DeviceOrientationEvent.requestPermission === 'function') {
+      DeviceOrientationEvent.requestPermission()
+        .then(function(permissionState) {
+          if (permissionState === 'granted') {
+            bindMotionListeners();
+            alert("Gyro & Acceleration Activated!");
+          } else {
+            alert("Motion permission denied.");
+          }
+        })
+        .catch(function(err) { alert("Permission error: " + err); });
+    } else {
+      bindMotionListeners();
+      alert("Motion listeners bound.");
+    }
+  }
+
+  function bindMotionListeners() {
+    window.addEventListener('deviceorientation', function(e) {
+      if (e.gamma === null) return;
+
+      // In portrait mount, gamma represents lateral roll
+      let rawRoll = e.gamma - zeroCalibrationOffset;
+      currentRollAngle = Math.round(rawRoll);
+
+      if (currentRollAngle < 0 && Math.abs(currentRollAngle) > maxLeftAngle) {
+        maxLeftAngle = Math.abs(currentRollAngle);
+        document.getElementById("maxLeanLeftVal").textContent = maxLeftAngle + "°";
+      } else if (currentRollAngle > 0 && currentRollAngle > maxRightAngle) {
+        maxRightAngle = currentRollAngle;
+        document.getElementById("maxLeanRightVal").textContent = maxRightAngle + "°";
+      }
+
+      let label = currentRollAngle < 0 ? ("L " + Math.abs(currentRollAngle) + "°") : (currentRollAngle > 0 ? ("R " + currentRollAngle + "°") : "0°");
+      document.getElementById("liveLeanVal").textContent = label;
+
+      streamGyroOverBle();
+    }, true);
+
+    window.addEventListener('devicemotion', function(e) {
+      if (e.accelerationIncludingGravity && e.accelerationIncludingGravity.x !== null) {
+        // x represents lateral acceleration in portrait
+        currentLateralG = parseFloat((e.accelerationIncludingGravity.x / 9.80665).toFixed(2));
+        document.getElementById("liveGVal").textContent = Math.abs(currentLateralG).toFixed(2) + " G";
+      }
+    }, true);
+  }
+
+  function streamGyroOverBle() {
+    const now = Date.now();
+    // Stream at ~15 Hz (every 66 ms)
+    if (now - lastGyroBleTime >= 66 && navCharacteristic) {
+      lastGyroBleTime = now;
+      const packet = "GYRO," + currentRollAngle + "," + maxLeftAngle + "," + maxRightAngle + "," + currentLateralG.toFixed(2) + "\n";
+      writeBLE(packet);
+    }
+  }
 
   function setBrightness(percent, btnEl) {
     document.querySelectorAll('.btn-bri').forEach(function(b) { b.classList.remove('active'); });
@@ -410,7 +536,7 @@
 
     try {
       if (!navigator.bluetooth) {
-        alert("Web Bluetooth not found. Open inside Bluefy on iOS.");
+        alert("Web Bluetooth not found. Open in Bluefy on iOS.");
         return;
       }
 
@@ -434,6 +560,7 @@
       document.getElementById("btnConnect").textContent = "Disconnect";
 
       evaluateNavigation(true);
+      enableSensors(); // Auto-prompt sensors upon connection
     } catch (err) {
       alert("BLE Error: " + err.message);
     }
@@ -511,11 +638,11 @@
 
   function exportGPX() {
     if (recordedGpxTrack.length === 0) {
-      alert("No recorded track points available!");
+      alert("No recorded track points!");
       return;
     }
 
-    let gpx = '<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="Tripper">\n<trk>\n<name>Ride ' + new Date().toLocaleDateString() + '</name>\n<trkseg>\n';
+    let gpx = '<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="Tripper">\n<trk>\n<name>Hunter 350 Ride ' + new Date().toLocaleDateString() + '</name>\n<trkseg>\n';
     recordedGpxTrack.forEach(function(pt) {
       gpx += '  <trkpt lat="' + pt.lat + '" lon="' + pt.lon + '"><time>' + pt.time + '</time><extensions><speed>' + pt.speed + '</speed></extensions></trkpt>\n';
     });
@@ -706,7 +833,7 @@
     btn.textContent = "Start Navigation";
     btn.className = "start-nav";
     btn.onclick = startNavigation;
-    document.getElementById("turnText").textContent = "Speedo & ODO Ready";
+    document.getElementById("turnText").textContent = "Speedo, ODO & Lean HUD Active";
 
     document.getElementById("gpxRow").style.display = "flex";
 
@@ -851,7 +978,6 @@
     const initDist = Math.round(activeStep.distance) || distMeters;
 
     let remDistMeters = distMeters;
-    // FIXED: Uses 'let' instead of 'int'
     for (let i = currentStepIdx + 1; i < routeSteps.length; i++) {
       remDistMeters += routeSteps[i].distance;
     }
