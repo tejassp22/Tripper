@@ -60,7 +60,6 @@
       background: #093c1d;
       color: var(--accent-green);
     }
-    /* Diagnostic Logger on screen */
     #diagLog {
       background: #000;
       border: 1px solid #333;
@@ -286,7 +285,7 @@
   }
 
   // ===========================================================
-  // 2. MAP & NAVIGATION ENGINE (Sandboxed with try/catch)
+  // 2. MAP & NAVIGATION ENGINE
   // ===========================================================
   let map, userMarker, destMarker, routeLine;
   let userLat = null, userLon = null;
@@ -325,3 +324,243 @@
       logMsg("System: Map & GPS Initialized");
     } catch (e) {
       logMsg("Map Init Exception: " + e.message);
+    }
+  }
+
+  function setupSearch() {
+    const input = document.getElementById("searchInput");
+    const list = document.getElementById("suggestions");
+
+    input.addEventListener("input", () => {
+      clearTimeout(searchDebounce);
+      const query = input.value.trim();
+      if (query.length < 3) {
+        list.style.display = "none";
+        return;
+      }
+
+      searchDebounce = setTimeout(async () => {
+        try {
+          const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=5`;
+          const res = await fetch(url);
+          const data = await res.json();
+          renderSuggestions(data);
+        } catch (e) {
+          console.error("Search error:", e);
+        }
+      }, 400);
+    });
+
+    document.addEventListener("click", (e) => {
+      if (!e.target.closest('.search-container')) {
+        list.style.display = "none";
+      }
+    });
+  }
+
+  function renderSuggestions(items) {
+    const list = document.getElementById("suggestions");
+    list.innerHTML = "";
+    if (!items || items.length === 0) {
+      list.style.display = "none";
+      return;
+    }
+
+    items.forEach(item => {
+      const div = document.createElement("div");
+      div.className = "suggestion-item";
+      div.textContent = item.display_name;
+      div.onclick = () => {
+        document.getElementById("searchInput").value = item.display_name.split(',')[0];
+        list.style.display = "none";
+        selectDestination(parseFloat(item.lat), parseFloat(item.lon), item.display_name.split(',')[0]);
+      };
+      list.appendChild(div);
+    });
+
+    list.style.display = "block";
+  }
+
+  function handleManualSearch() {
+    const query = document.getElementById("searchInput").value.trim();
+    if (!query) return;
+    fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=1`)
+      .then(r => r.json())
+      .then(data => {
+        if (data && data.length > 0) {
+          selectDestination(parseFloat(data[0].lat), parseFloat(data[0].lon), data[0].display_name.split(',')[0]);
+        } else {
+          alert("Location not found.");
+        }
+      });
+  }
+
+  async function selectDestination(lat, lon, label) {
+    targetLat = lat;
+    targetLon = lon;
+    targetName = label;
+
+    if (destMarker) map.removeLayer(destMarker);
+    destMarker = L.marker([lat, lon]).addTo(map).bindPopup(label).openPopup();
+
+    document.getElementById("turnText").textContent = "Calculating route...";
+
+    const url = `https://router.project-osrm.org/route/v1/driving/${userLon},${userLat};${lon},${lat}?overview=full&geometries=geojson&steps=true`;
+
+    try {
+      const res = await fetch(url);
+      const data = await res.json();
+      if (!data.routes || data.routes.length === 0) {
+        alert("No drivable route found!");
+        return;
+      }
+
+      const route = data.routes[0];
+      totalTripKm = (route.distance / 1000.0).toFixed(1);
+      routeSteps = route.legs[0].steps;
+      currentStepIdx = 0;
+
+      if (routeLine) map.removeLayer(routeLine);
+      routeLine = L.geoJSON(route.geometry, {
+        style: { color: '#00e676', weight: 6, opacity: 0.9 }
+      }).addTo(map);
+
+      map.fitBounds(routeLine.getBounds(), { padding: [50, 50] });
+
+      document.getElementById("navControlRow").style.display = "flex";
+      document.getElementById("turnText").textContent = `Route Ready (${totalTripKm} km)`;
+      document.getElementById("remDistText").textContent = `${totalTripKm} km`;
+      logMsg(`Route: ${totalTripKm} km ready`);
+    } catch (err) {
+      alert("Routing error: " + err.message);
+    }
+  }
+
+  function startNavigation() {
+    isNavigating = true;
+    const btn = document.getElementById("btnStartNav");
+    btn.textContent = "Stop Navigation";
+    btn.className = "stop-nav";
+    btn.onclick = stopNavigation;
+
+    centerOnUser();
+    evaluateNavigation();
+  }
+
+  function stopNavigation() {
+    isNavigating = false;
+    const btn = document.getElementById("btnStartNav");
+    btn.textContent = "Start Navigation";
+    btn.className = "start-nav";
+    btn.onclick = startNavigation;
+    document.getElementById("turnText").textContent = "Navigation Paused";
+  }
+
+  function cancelRoute() {
+    stopNavigation();
+    if (destMarker) map.removeLayer(destMarker);
+    if (routeLine) map.removeLayer(routeLine);
+    routeSteps = [];
+    document.getElementById("navControlRow").style.display = "none";
+    document.getElementById("turnText").textContent = "Search or tap destination on map";
+    document.getElementById("distText").textContent = "-- m";
+    document.getElementById("remDistText").textContent = "-- km";
+  }
+
+  function startGpsTracking() {
+    if (!navigator.geolocation) return;
+
+    navigator.geolocation.watchPosition(
+      (pos) => {
+        userLat = pos.coords.latitude;
+        userLon = pos.coords.longitude;
+
+        if (!userMarker) {
+          userMarker = L.circleMarker([userLat, userLon], {
+            radius: 8,
+            fillColor: "#2979ff",
+            color: "#ffffff",
+            weight: 2,
+            opacity: 1,
+            fillOpacity: 1.0
+          }).addTo(map);
+          map.setView([userLat, userLon], 15);
+        } else {
+          userMarker.setLatLng([userLat, userLon]);
+        }
+
+        if (isNavigating) {
+          map.setView([userLat, userLon]);
+          evaluateNavigation();
+        }
+      },
+      (err) => logMsg("GPS Warning: " + err.message),
+      { enableHighAccuracy: true, maximumAge: 1000 }
+    );
+  }
+
+  function centerOnUser() {
+    if (userLat && userLon && map) {
+      map.setView([userLat, userLon], 16);
+    }
+  }
+
+  function mapManeuverToTripper(maneuver) {
+    const type = maneuver.type;
+    const modifier = maneuver.modifier || "";
+
+    if (type.includes("roundabout") || type.includes("rotary")) return 4;
+    if (modifier.includes("left")) return 1;
+    if (modifier.includes("right")) return 2;
+    if (modifier.includes("u-turn")) return 3;
+    return 0;
+  }
+
+  function evaluateNavigation() {
+    if (!isNavigating || !routeSteps || routeSteps.length === 0 || currentStepIdx >= routeSteps.length) return;
+
+    const step = routeSteps[currentStepIdx];
+    const stepTargetCoord = step.maneuver.location;
+    const distMeters = Math.round(getDistanceMeters(userLat, userLon, stepTargetCoord[1], stepTargetCoord[0]));
+
+    if (distMeters < 25 && currentStepIdx < routeSteps.length - 1) {
+      currentStepIdx++;
+    }
+
+    const activeStep = routeSteps[currentStepIdx];
+    const turnType = mapManeuverToTripper(activeStep.maneuver);
+    const roadName = activeStep.name || targetName || "Road";
+    const initDist = Math.round(activeStep.distance) || distMeters;
+
+    let remDistMeters = distMeters;
+    for (let i = currentStepIdx + 1; i < routeSteps.length; i++) {
+      remDistMeters += routeSteps[i].distance;
+    }
+    const remKm = (remDistMeters / 1000.0).toFixed(1);
+
+    document.getElementById("turnText").textContent = activeStep.maneuver.instruction || roadName;
+    document.getElementById("distText").textContent = `${distMeters} m`;
+    document.getElementById("remDistText").textContent = `${remKm} km`;
+
+    const now = new Date();
+    const payload = `NAV,${turnType},${distMeters},${initDist},${remKm},${totalTripKm},${now.getHours()},${now.getMinutes()},${roadName}\n`;
+    writeBLE(payload);
+  }
+
+  function getDistanceMeters(lat1, lon1, lat2, lon2) {
+    const R = 6371000;
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = Math.sin(dLat/2) * Math.sin(dLat/2) +
+              Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
+              Math.sin(dLon/2) * Math.sin(dLon/2);
+    return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
+  }
+
+  window.addEventListener('load', () => {
+    initMap();
+  });
+</script>
+
+</body>
+</html>
