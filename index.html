@@ -1,0 +1,273 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>Tripper BLE Controller</title>
+  <style>
+    :root {
+      --bg: #121212;
+      --card: #1e1e1e;
+      --accent: #d80000;
+      --text: #ffffff;
+      --text-dim: #888888;
+      --border: #2d2d2d;
+    }
+    * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    body {
+      background-color: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    .container {
+      width: 100%;
+      max-width: 420px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    h1 {
+      font-size: 1.3rem;
+      margin: 4px 0;
+      text-align: center;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+    }
+    .status-badge {
+      text-align: center;
+      font-size: 0.8rem;
+      font-weight: 600;
+      padding: 6px 12px;
+      border-radius: 20px;
+      background: #2a2a2a;
+      color: var(--text-dim);
+      align-self: center;
+    }
+    .status-badge.connected {
+      background: #004d20;
+      color: #00e676;
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    label {
+      font-size: 0.75rem;
+      font-weight: 600;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    input, select {
+      width: 100%;
+      background: #2a2a2a;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px;
+      color: #fff;
+      font-size: 0.95rem;
+      outline: none;
+    }
+    input:focus, select:focus {
+      border-color: var(--accent);
+    }
+    .row {
+      display: flex;
+      gap: 10px;
+    }
+    .row > div {
+      flex: 1;
+    }
+    button {
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      padding: 14px;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      letter-spacing: 0.5px;
+      transition: opacity 0.15s;
+    }
+    button:active {
+      opacity: 0.8;
+    }
+    button.secondary {
+      background: #2a2a2a;
+      border: 1px solid var(--border);
+    }
+    .preview-box {
+      font-family: monospace;
+      font-size: 0.75rem;
+      background: #000;
+      border-radius: 6px;
+      padding: 8px;
+      color: #00e676;
+      word-break: break-all;
+    }
+  </style>
+</head>
+<body>
+
+<div class="container">
+  <h1>Tripper Controller</h1>
+  <div id="statusBadge" class="status-badge">DISCONNECTED</div>
+
+  <button id="btnConnect" onclick="toggleConnection()">Connect to Tripper</button>
+
+  <div class="card">
+    <div>
+      <label for="turnSelect">Maneuver Type</label>
+      <select id="turnSelect" onchange="updatePreview()">
+        <option value="0">Straight (0)</option>
+        <option value="1" selected>Turn Left (1)</option>
+        <option value="2">Turn Right (2)</option>
+        <option value="3">U-Turn (3)</option>
+        <option value="4">Roundabout (4)</option>
+      </select>
+    </div>
+
+    <div class="row">
+      <div>
+        <label for="stepDist">Turn Dist (m)</label>
+        <input type="number" id="stepDist" value="450" oninput="updatePreview()">
+      </div>
+      <div>
+        <label for="stepInitDist">Initial Dist (m)</label>
+        <input type="number" id="stepInitDist" value="500" oninput="updatePreview()">
+      </div>
+    </div>
+
+    <div>
+      <label for="roadName">Road Name</label>
+      <input type="text" id="roadName" value="MG Road" maxlength="28" oninput="updatePreview()">
+    </div>
+
+    <div class="row">
+      <div>
+        <label for="remDist">Remaining (km)</label>
+        <input type="number" step="0.1" id="remDist" value="7.5" oninput="updatePreview()">
+      </div>
+      <div>
+        <label for="totalDist">Total (km)</label>
+        <input type="number" step="0.1" id="totalDist" value="10.0" oninput="updatePreview()">
+      </div>
+    </div>
+
+    <button onclick="sendManualPacket()">Send Update</button>
+  </div>
+
+  <div class="card">
+    <label>Generated Payload</label>
+    <div id="preview" class="preview-box">NAV,...</div>
+  </div>
+</div>
+
+<script>
+  const SERVICE_UUID = "4fafc201-1fb5-459e-8fcc-c5c9c331914b";
+  const CHARACTERISTIC_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a8";
+
+  let bleDevice = null;
+  let navCharacteristic = null;
+
+  function updateStatus(connected) {
+    const badge = document.getElementById("statusBadge");
+    const btn = document.getElementById("btnConnect");
+    if (connected) {
+      badge.textContent = "CONNECTED: " + (bleDevice.name || "Tripper");
+      badge.classList.add("connected");
+      btn.textContent = "Disconnect";
+      btn.classList.add("secondary");
+    } else {
+      badge.textContent = "DISCONNECTED";
+      badge.classList.remove("connected");
+      btn.textContent = "Connect to Tripper";
+      btn.classList.remove("secondary");
+    }
+  }
+
+  function buildPayload() {
+    const turn = document.getElementById("turnSelect").value;
+    const stepDist = document.getElementById("stepDist").value || "0";
+    const initDist = document.getElementById("stepInitDist").value || "0";
+    const remDist = document.getElementById("remDist").value || "0.0";
+    const totDist = document.getElementById("totalDist").value || "0.0";
+    const road = document.getElementById("roadName").value || "Road";
+
+    const now = new Date();
+    const hr = now.getHours();
+    const min = now.getMinutes();
+
+    return `NAV,${turn},${stepDist},${initDist},${remDist},${totDist},${hr},${min},${road}\n`;
+  }
+
+  function updatePreview() {
+    document.getElementById("preview").textContent = buildPayload().trim();
+  }
+
+  async function toggleConnection() {
+    if (bleDevice && bleDevice.gatt.connected) {
+      bleDevice.gatt.disconnect();
+      return;
+    }
+
+    try {
+      if (!navigator.bluetooth) {
+        alert("Web Bluetooth not found. Use the 'Bluefy' browser app on iOS.");
+        return;
+      }
+
+      bleDevice = await navigator.bluetooth.requestDevice({
+	  acceptAllDevices: true,
+      optionalServices: [SERVICE_UUID]
+	  });
+
+      bleDevice.addEventListener('gattserverdisconnected', () => {
+        updateStatus(false);
+      });
+
+      const server = await bleDevice.gatt.connect();
+      const service = await server.getPrimaryService(SERVICE_UUID);
+      navCharacteristic = await service.getCharacteristic(CHARACTERISTIC_UUID);
+
+      updateStatus(true);
+      sendManualPacket(); // Send initial sync immediately
+    } catch (err) {
+      console.error(err);
+      alert("BLE Error: " + err.message);
+      updateStatus(false);
+    }
+  }
+
+  async function sendManualPacket() {
+    if (!navCharacteristic) {
+      alert("Connect to the Tripper first.");
+      return;
+    }
+
+    const payload = buildPayload();
+    const encoder = new TextEncoder();
+    try {
+      await navCharacteristic.writeValue(encoder.encode(payload));
+    } catch (err) {
+      console.error("Write error:", err);
+      alert("Failed to write to BLE: " + err.message);
+    }
+  }
+
+  // Initial render
+  updatePreview();
+</script>
+
+</body>
+</html>
