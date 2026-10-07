@@ -3,12 +3,13 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>Tripper BLE Controller</title>
+  <title>Tripper BLE Controller & Simulator</title>
   <style>
     :root {
       --bg: #121212;
       --card: #1e1e1e;
       --accent: #d80000;
+      --accent-blue: #007aff;
       --text: #ffffff;
       --text-dim: #888888;
       --border: #2d2d2d;
@@ -25,13 +26,13 @@
     }
     .container {
       width: 100%;
-      max-width: 420px;
+      max-width: 440px;
       display: flex;
       flex-direction: column;
       gap: 14px;
     }
     h1 {
-      font-size: 1.3rem;
+      font-size: 1.25rem;
       margin: 4px 0;
       text-align: center;
       letter-spacing: 1px;
@@ -60,8 +61,17 @@
       flex-direction: column;
       gap: 12px;
     }
+    .card-title {
+      font-size: 0.85rem;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      color: var(--text);
+      text-transform: uppercase;
+      border-bottom: 1px solid var(--border);
+      padding-bottom: 6px;
+    }
     label {
-      font-size: 0.75rem;
+      font-size: 0.72rem;
       font-weight: 600;
       color: var(--text-dim);
       text-transform: uppercase;
@@ -92,8 +102,8 @@
       color: #fff;
       border: none;
       border-radius: 8px;
-      padding: 14px;
-      font-size: 1rem;
+      padding: 13px;
+      font-size: 0.95rem;
       font-weight: 600;
       cursor: pointer;
       letter-spacing: 0.5px;
@@ -106,6 +116,9 @@
       background: #2a2a2a;
       border: 1px solid var(--border);
     }
+    button.sim-active {
+      background: #c67d00;
+    }
     .preview-box {
       font-family: monospace;
       font-size: 0.75rem;
@@ -114,6 +127,18 @@
       padding: 8px;
       color: #00e676;
       word-break: break-all;
+    }
+    .sim-info {
+      font-size: 0.82rem;
+      color: var(--text-dim);
+      line-height: 1.4;
+      background: #151515;
+      padding: 10px;
+      border-radius: 8px;
+      border: 1px dashed var(--border);
+    }
+    .sim-info b {
+      color: #fff;
     }
   </style>
 </head>
@@ -125,7 +150,34 @@
 
   <button id="btnConnect" onclick="toggleConnection()">Connect to Tripper</button>
 
+  <!-- AUTO SIMULATION CARD -->
   <div class="card">
+    <div class="card-title">Auto Ride Simulator</div>
+    <div class="sim-info" id="simStatusText">
+      Status: <b>Idle</b><br>
+      Step: <b id="simStepName">-</b> | Dist to Turn: <b id="simDist">-</b>
+    </div>
+
+    <div class="row">
+      <div>
+        <label for="simSpeed">Sim Speed</label>
+        <select id="simSpeed">
+          <option value="1">1x (Cruising ~40 km/h)</option>
+          <option value="2" selected>2x (Fast ~80 km/h)</option>
+          <option value="4">4x (Hyper ~160 km/h)</option>
+        </select>
+      </div>
+    </div>
+
+    <div class="row">
+      <button id="btnStartSim" onclick="toggleSimulation()">Start Simulation</button>
+      <button class="secondary" onclick="resetSimulation()">Reset</button>
+    </div>
+  </div>
+
+  <!-- MANUAL OVERRIDE CARD -->
+  <div class="card">
+    <div class="card-title">Manual Controls</div>
     <div>
       <label for="turnSelect">Maneuver Type</label>
       <select id="turnSelect" onchange="updatePreview()">
@@ -164,11 +216,12 @@
       </div>
     </div>
 
-    <button onclick="sendManualPacket()">Send Update</button>
+    <button onclick="sendManualPacket()">Send Manual Update</button>
   </div>
 
+  <!-- PACKET PREVIEW -->
   <div class="card">
-    <label>Generated Payload</label>
+    <label>Live Packet Stream</label>
     <div id="preview" class="preview-box">NAV,...</div>
   </div>
 </div>
@@ -179,6 +232,25 @@
 
   let bleDevice = null;
   let navCharacteristic = null;
+
+  // -----------------------------------------------------------
+  // Simulated Route Data
+  // -----------------------------------------------------------
+  const SIM_ROUTE = [
+    { turn: 0, distance: 800,  road: "Main Highway" },
+    { turn: 1, distance: 450,  road: "Church Street" },
+    { turn: 2, distance: 600,  road: "Residency Road" },
+    { turn: 4, distance: 500,  road: "Ring Roundabout" },
+    { turn: 3, distance: 350,  road: "U-Turn Airport Expy" },
+    { turn: 0, distance: 1200, road: "Destination Way" }
+  ];
+
+  const TOTAL_SIM_TRIP_KM = 8.5;
+  let simIndex = 0;
+  let simCurrentStepDist = 0;
+  let simStepInitialDist = 0;
+  let simRemainingTripKm = TOTAL_SIM_TRIP_KM;
+  let simInterval = null;
 
   function updateStatus(connected) {
     const badge = document.getElementById("statusBadge");
@@ -193,28 +265,32 @@
       badge.classList.remove("connected");
       btn.textContent = "Connect to Tripper";
       btn.classList.remove("secondary");
+      stopSimulation();
     }
   }
 
-  function buildPayload() {
-    const turn = document.getElementById("turnSelect").value;
-    const stepDist = document.getElementById("stepDist").value || "0";
-    const initDist = document.getElementById("stepInitDist").value || "0";
-    const remDist = document.getElementById("remDist").value || "0.0";
-    const totDist = document.getElementById("totalDist").value || "0.0";
-    const road = document.getElementById("roadName").value || "Road";
-
+  function buildPayload(turn, stepDist, initDist, remDist, totDist, road) {
     const now = new Date();
     const hr = now.getHours();
     const min = now.getMinutes();
-
     return `NAV,${turn},${stepDist},${initDist},${remDist},${totDist},${hr},${min},${road}\n`;
   }
 
   function updatePreview() {
-    document.getElementById("preview").textContent = buildPayload().trim();
+    const payload = buildPayload(
+      document.getElementById("turnSelect").value,
+      document.getElementById("stepDist").value || "0",
+      document.getElementById("stepInitDist").value || "0",
+      document.getElementById("remDist").value || "0.0",
+      document.getElementById("totalDist").value || "0.0",
+      document.getElementById("roadName").value || "Road"
+    );
+    document.getElementById("preview").textContent = payload.trim();
   }
 
+  // -----------------------------------------------------------
+  // Bluetooth Connection Handling
+  // -----------------------------------------------------------
   async function toggleConnection() {
     if (bleDevice && bleDevice.gatt.connected) {
       bleDevice.gatt.disconnect();
@@ -223,25 +299,23 @@
 
     try {
       if (!navigator.bluetooth) {
-        alert("Web Bluetooth not found. Use the 'Bluefy' browser app on iOS.");
+        alert("Web Bluetooth not found. Open this page in 'Bluefy' on iOS or Chrome/Edge on laptop.");
         return;
       }
 
       bleDevice = await navigator.bluetooth.requestDevice({
-	  acceptAllDevices: true,
-      optionalServices: [SERVICE_UUID]
-	  });
-
-      bleDevice.addEventListener('gattserverdisconnected', () => {
-        updateStatus(false);
+        acceptAllDevices: true,
+        optionalServices: [SERVICE_UUID]
       });
+
+      bleDevice.addEventListener('gattserverdisconnected', () => updateStatus(false));
 
       const server = await bleDevice.gatt.connect();
       const service = await server.getPrimaryService(SERVICE_UUID);
       navCharacteristic = await service.getCharacteristic(CHARACTERISTIC_UUID);
 
       updateStatus(true);
-      sendManualPacket(); // Send initial sync immediately
+      sendManualPacket();
     } catch (err) {
       console.error(err);
       alert("BLE Error: " + err.message);
@@ -249,23 +323,131 @@
     }
   }
 
-  async function sendManualPacket() {
-    if (!navCharacteristic) {
-      alert("Connect to the Tripper first.");
-      return;
-    }
-
-    const payload = buildPayload();
-    const encoder = new TextEncoder();
+  async function writeBLE(rawString) {
+    if (!navCharacteristic) return;
     try {
-      await navCharacteristic.writeValue(encoder.encode(payload));
+      const encoder = new TextEncoder();
+      await navCharacteristic.writeValue(encoder.encode(rawString));
+      document.getElementById("preview").textContent = rawString.trim();
     } catch (err) {
-      console.error("Write error:", err);
-      alert("Failed to write to BLE: " + err.message);
+      console.error("BLE Write error:", err);
     }
   }
 
-  // Initial render
+  function sendManualPacket() {
+    if (!navCharacteristic) {
+      alert("Please connect to Tripper first!");
+      return;
+    }
+    stopSimulation();
+    const payload = buildPayload(
+      document.getElementById("turnSelect").value,
+      document.getElementById("stepDist").value,
+      document.getElementById("stepInitDist").value,
+      document.getElementById("remDist").value,
+      document.getElementById("totalDist").value,
+      document.getElementById("roadName").value
+    );
+    writeBLE(payload);
+  }
+
+  // -----------------------------------------------------------
+  // Simulation Engine
+  // -----------------------------------------------------------
+  function initSimStep() {
+    const leg = SIM_ROUTE[simIndex];
+    simCurrentStepDist = leg.distance;
+    simStepInitialDist = leg.distance;
+    updateSimDisplay();
+  }
+
+  function updateSimDisplay() {
+    const leg = SIM_ROUTE[simIndex];
+    document.getElementById("simStepName").textContent = `${leg.road} (Step ${simIndex + 1}/${SIM_ROUTE.length})`;
+    document.getElementById("simDist").textContent = `${simCurrentStepDist} m`;
+  }
+
+  function toggleSimulation() {
+    if (!navCharacteristic) {
+      alert("Please connect to Tripper via Bluetooth first!");
+      return;
+    }
+
+    if (simInterval) {
+      stopSimulation();
+    } else {
+      startSimulation();
+    }
+  }
+
+  function startSimulation() {
+    const btn = document.getElementById("btnStartSim");
+    btn.textContent = "Pause Simulation";
+    btn.classList.add("sim-active");
+    document.getElementById("simStatusText").querySelector("b").textContent = "Running";
+
+    if (simCurrentStepDist === 0) {
+      initSimStep();
+    }
+
+    simInterval = setInterval(simulationTick, 1000);
+  }
+
+  function stopSimulation() {
+    if (simInterval) {
+      clearInterval(simInterval);
+      simInterval = null;
+    }
+    const btn = document.getElementById("btnStartSim");
+    btn.textContent = "Resume Simulation";
+    btn.classList.remove("sim-active");
+    const bTag = document.getElementById("simStatusText").querySelector("b");
+    if (bTag) bTag.textContent = "Paused";
+  }
+
+  function resetSimulation() {
+    stopSimulation();
+    simIndex = 0;
+    simRemainingTripKm = TOTAL_SIM_TRIP_KM;
+    initSimStep();
+    const btn = document.getElementById("btnStartSim");
+    btn.textContent = "Start Simulation";
+    document.getElementById("simStatusText").querySelector("b").textContent = "Idle";
+  }
+
+  function simulationTick() {
+    const speedMultiplier = parseInt(document.getElementById("simSpeed").value, 10);
+    // Base decrement: 15 meters per second at 1x (~54 km/h)
+    const decrement = 15 * speedMultiplier;
+
+    simCurrentStepDist -= decrement;
+    simRemainingTripKm -= (decrement / 1000.0);
+    if (simRemainingTripKm < 0) simRemainingTripKm = 0;
+
+    if (simCurrentStepDist <= 0) {
+      // Advance to next leg
+      simIndex = (simIndex + 1) % SIM_ROUTE.length;
+      initSimStep();
+    }
+
+    const currentLeg = SIM_ROUTE[simIndex];
+    updateSimDisplay();
+
+    // Construct packet and push via BLE
+    const payload = buildPayload(
+      currentLeg.turn,
+      Math.max(0, simCurrentStepDist),
+      simStepInitialDist,
+      simRemainingTripKm.toFixed(1),
+      TOTAL_SIM_TRIP_KM.toFixed(1),
+      currentLeg.road
+    );
+
+    writeBLE(payload);
+  }
+
+  // Init default state
+  initSimStep();
   updatePreview();
 </script>
 
