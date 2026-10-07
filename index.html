@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>Tripper Navigator</title>
+  <title>Tripper Navigator Pro</title>
 
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
   <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
@@ -74,31 +74,50 @@
       font-weight: 600;
       cursor: pointer;
     }
-    .telemetry-row {
-      display: flex;
-      gap: 8px;
+    
+    /* 4-Column Telemetry Bar */
+    .telemetry-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 6px;
     }
-    .telemetry-card {
-      flex: 1;
+    .tele-box {
       background: var(--card);
       border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 8px 12px;
+      border-radius: 8px;
+      padding: 6px;
       display: flex;
       flex-direction: column;
       align-items: center;
     }
-    .telemetry-label {
-      font-size: 0.68rem;
+    .tele-label {
+      font-size: 0.62rem;
       text-transform: uppercase;
       color: var(--text-dim);
       font-weight: 700;
     }
-    .telemetry-value {
-      font-size: 1.3rem;
+    .tele-val {
+      font-size: 1.05rem;
       font-weight: 800;
       color: var(--accent-green);
+      margin-top: 2px;
     }
+
+    .weather-strip {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 8px 12px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 0.8rem;
+    }
+    .rain-warning {
+      color: #29b6f6;
+      font-weight: 700;
+    }
+
     .search-container {
       position: relative;
       width: 100%;
@@ -150,7 +169,7 @@
     }
     #map {
       width: 100%;
-      height: 320px;
+      height: 300px;
       border-radius: 12px;
       border: 1px solid var(--border);
       z-index: 1;
@@ -202,28 +221,47 @@
     button.stop-nav {
       background: #c62828;
     }
+    button.gpx-btn {
+      background: #ff9800;
+      color: #000;
+    }
   </style>
 </head>
 <body>
 
 <div class="container">
   <header>
-    <h1>Tejas's Hunter 350</h1>
+    <h1>Hunter 350 Navigator</h1>
     <div class="header-actions">
       <button id="btnThemeToggle" class="btn-theme" onclick="toggleTheme()">☀️ Day</button>
       <div id="statusBadge" class="status-badge">DISCONNECTED</div>
     </div>
   </header>
 
-  <div class="telemetry-row">
-    <div class="telemetry-card">
-      <div class="telemetry-label">Live Speed</div>
-      <div class="telemetry-value"><span id="speedVal">0</span> <small style="font-size:0.75rem; color:var(--text-dim);">km/h</small></div>
+  <!-- Telemetry Dashboard -->
+  <div class="telemetry-grid">
+    <div class="tele-box">
+      <div class="tele-label">Speed</div>
+      <div class="tele-val"><span id="speedVal">0</span> <small style="font-size:0.6rem">km/h</small></div>
     </div>
-    <div class="telemetry-card">
-      <div class="telemetry-label">Mode</div>
-      <div class="telemetry-value" id="statusVal" style="font-size: 1rem; padding-top: 4px; color: var(--accent-blue);">Idle Speedo</div>
+    <div class="tele-box">
+      <div class="tele-label">Top Spd</div>
+      <div class="tele-val"><span id="topSpeedVal">0</span></div>
     </div>
+    <div class="tele-box">
+      <div class="tele-label">Avg Spd</div>
+      <div class="tele-val"><span id="avgSpeedVal">0</span></div>
+    </div>
+    <div class="tele-box">
+      <div class="tele-label">Trip Time</div>
+      <div class="tele-val" id="tripTimeVal" style="color:var(--text)">00:00</div>
+    </div>
+  </div>
+
+  <!-- Live Weather Strip -->
+  <div class="weather-strip">
+    <div>Weather: <b id="weatherTemp">--</b>°C (<span id="weatherDesc">Updating...</span>)</div>
+    <div id="rainAlertBadge" class="rain-warning" style="display: none;">🌧️ Rain Advisory</div>
   </div>
 
   <div class="row">
@@ -241,9 +279,15 @@
 
   <div id="map"></div>
 
+  <!-- Navigation Action Bar -->
   <div class="row" id="navControlRow" style="display: none;">
     <button id="btnStartNav" class="start-nav" onclick="startNavigation()">Start Navigation</button>
     <button class="secondary" onclick="cancelRoute()">Clear</button>
+  </div>
+
+  <!-- GPX Download Notification Row -->
+  <div class="row" id="gpxRow" style="display: none;">
+    <button class="gpx-btn" onclick="exportGPX()">Download GPX Route</button>
   </div>
 
   <div class="card">
@@ -255,13 +299,15 @@
 </div>
 
 <script>
+  // ===========================================================
+  // 1. BLUETOOTH & THEME
+  // ===========================================================
   const SERVICE_UUID = "4fafc201-1fb5-459e-8fcc-c5c9c331914b";
   const CHARACTERISTIC_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a8";
 
   let bleDevice = null;
   let navCharacteristic = null;
   let currentThemeMode = 0; // 0 = Day/White, 1 = Night/Black
-  let liveSpeedKmh = 0;
 
   function toggleTheme() {
     currentThemeMode = currentThemeMode === 0 ? 1 : 0;
@@ -316,6 +362,109 @@
     }
   }
 
+  // ===========================================================
+  // 2. LIVE WEATHER & RAIN CHECK (Open-Meteo, 100% Free)
+  // ===========================================================
+  let ambientTemp = 28;
+  let rainActive = 0; // 0 = No, 1 = Yes
+  let lastWeatherCheck = 0;
+
+  async function fetchLiveWeather(lat, lon) {
+    // Check at most every 4 minutes
+    const now = Date.now();
+    if (now - lastWeatherCheck < 240000) return;
+    lastWeatherCheck = now;
+
+    try {
+      const url = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,precipitation,weather_code&hourly=precipitation_probability&forecast_days=1`;
+      const res = await fetch(url);
+      const data = await res.json();
+
+      if (data && data.current) {
+        ambientTemp = Math.round(data.current.temperature_2m);
+        document.getElementById("weatherTemp").textContent = ambientTemp;
+
+        // Weather codes: 51-67 (Rain), 80-82 (Showers), 95-99 (Thunderstorm)
+        const code = data.current.weather_code;
+        const currentRain = data.current.precipitation > 0.1 || (code >= 51 && code <= 67) || (code >= 80 && code <= 99);
+        
+        // Check next 2 hours precipitation probability
+        const hourIdx = new Date().getHours();
+        const rainProb = (data.hourly && data.hourly.precipitation_probability) ? data.hourly.precipitation_probability[hourIdx] : 0;
+
+        if (currentRain || rainProb >= 40) {
+          rainActive = 1;
+          document.getElementById("rainAlertBadge").style.display = "block";
+          document.getElementById("weatherDesc").textContent = `${rainProb}% Rain Prob`;
+        } else {
+          rainActive = 0;
+          document.getElementById("rainAlertBadge").style.display = "none";
+          document.getElementById("weatherDesc").textContent = "Clear / Dry";
+        }
+      }
+    } catch (e) {
+      console.warn("Weather fetch error", e);
+    }
+  }
+
+  // ===========================================================
+  // 3. TRIP TELEMETRY & GPX RECORDER
+  // ===========================================================
+  let liveSpeedKmh = 0;
+  let topSpeedKmh = 0;
+  let speedSum = 0;
+  let speedSamples = 0;
+  let tripStartTime = null;
+  let recordedGpxTrack = []; // [{lat, lon, time, speed}]
+
+  function updateTelemetry(speed) {
+    liveSpeedKmh = speed;
+    document.getElementById("speedVal").textContent = liveSpeedKmh;
+
+    if (isNavigating) {
+      if (liveSpeedKmh > topSpeedKmh) {
+        topSpeedKmh = liveSpeedKmh;
+        document.getElementById("topSpeedVal").textContent = topSpeedKmh;
+      }
+      speedSum += liveSpeedKmh;
+      speedSamples++;
+      const avg = Math.round(speedSum / speedSamples);
+      document.getElementById("avgSpeedVal").textContent = avg;
+
+      // Update timer
+      if (tripStartTime) {
+        const elapsedSec = Math.floor((Date.now() - tripStartTime) / 1000);
+        const mm = String(Math.floor(elapsedSec / 60)).padStart(2, '0');
+        const ss = String(elapsedSec % 60).padStart(2, '0');
+        document.getElementById("tripTimeVal").textContent = `${mm}:${ss}`;
+      }
+    }
+  }
+
+  function exportGPX() {
+    if (recordedGpxTrack.length === 0) {
+      alert("No recorded ride points available!");
+      return;
+    }
+
+    let gpx = `<?xml version="1.0" encoding="UTF-8"?>\n<gpx version="1.1" creator="Tripper-Hunter350">\n<trk>\n<name>Hunter 350 Ride - ${new Date().toLocaleDateString()}</name>\n<trkseg>\n`;
+    recordedGpxTrack.forEach(pt => {
+      gpx += `  <trkpt lat="${pt.lat}" lon="${pt.lon}"><time>${pt.time}</time><extensions><speed>${pt.speed}</speed></extensions></trkpt>\n`;
+    });
+    gpx += `</trkseg>\n</trk>\n</gpx>`;
+
+    const blob = new Blob([gpx], { type: 'application/gpx+xml' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `Ride_${Date.now()}.gpx`;
+    a.click();
+    URL.revokeObjectURL(url);
+  }
+
+  // ===========================================================
+  // 4. MAP, SEARCH & NAVIGATION ENGINE
+  // ===========================================================
   let map, userMarker, destMarker, routeLine;
   let userLat = null, userLon = null;
   let targetLat = null, targetLon = null, targetName = "Destination";
@@ -456,12 +605,17 @@
 
   function startNavigation() {
     isNavigating = true;
+    tripStartTime = Date.now();
+    recordedGpxTrack = [];
+    topSpeedKmh = 0;
+    speedSum = 0;
+    speedSamples = 0;
+
     const btn = document.getElementById("btnStartNav");
     btn.textContent = "Stop Navigation";
     btn.className = "stop-nav";
     btn.onclick = stopNavigation;
-    document.getElementById("statusVal").textContent = "Navigating";
-    document.getElementById("statusVal").style.color = "var(--accent-green)";
+    document.getElementById("gpxRow").style.display = "none";
 
     centerOnUser();
     evaluateNavigation();
@@ -473,11 +627,16 @@
     btn.textContent = "Start Navigation";
     btn.className = "start-nav";
     btn.onclick = startNavigation;
-    document.getElementById("statusVal").textContent = "Idle Speedo";
-    document.getElementById("statusVal").style.color = "var(--accent-blue)";
     document.getElementById("turnText").textContent = "Speedo Idle Mode (Ride Safe)";
-    
-    evaluateNavigation(true);
+
+    // Show GPX export button
+    document.getElementById("gpxRow").style.display = "flex";
+
+    // Send Ride Summary Packet to Display: SUM,<dist>,<durationMin>,<topSpd>,<avgSpd>,<temp>
+    const durationMin = tripStartTime ? Math.max(1, Math.round((Date.now() - tripStartTime) / 60000)) : 1;
+    const avg = speedSamples > 0 ? Math.round(speedSum / speedSamples) : 0;
+    const sumPacket = `SUM,${totalTripKm},${durationMin},${topSpeedKmh},${avg},${ambientTemp}\n`;
+    writeBLE(sumPacket);
   }
 
   function cancelRoute() {
@@ -499,8 +658,21 @@
         userLon = pos.coords.longitude;
         
         const rawSpeed = pos.coords.speed;
-        liveSpeedKmh = (rawSpeed && rawSpeed > 0.5) ? Math.round(rawSpeed * 3.6) : 0;
-        document.getElementById("speedVal").textContent = liveSpeedKmh;
+        const spd = (rawSpeed && rawSpeed > 0.5) ? Math.round(rawSpeed * 3.6) : 0;
+        updateTelemetry(spd);
+
+        // Record point for GPX track if navigating
+        if (isNavigating) {
+          recordedGpxTrack.push({
+            lat: userLat,
+            lon: userLon,
+            time: new Date().toISOString(),
+            speed: spd
+          });
+        }
+
+        // Periodically refresh weather
+        fetchLiveWeather(userLat, userLon);
 
         if (!userMarker) {
           userMarker = L.circleMarker([userLat, userLon], {
@@ -549,8 +721,9 @@
     const now = new Date();
 
     if (!isNavigating) {
+      // SPD Protocol: SPD,<speed>,<hr>,<min>,<theme>,<temp>,<rain>
       if (forcePush && navCharacteristic) {
-        const payload = `SPD,${liveSpeedKmh},${now.getHours()},${now.getMinutes()},${currentThemeMode}\n`;
+        const payload = `SPD,${liveSpeedKmh},${now.getHours()},${now.getMinutes()},${currentThemeMode},${ambientTemp},${rainActive}\n`;
         writeBLE(payload);
       }
       return;
@@ -584,8 +757,8 @@
     document.getElementById("distText").textContent = `${distMeters} m`;
     document.getElementById("remDistText").textContent = `${remKm} km`;
 
-    // NAV Protocol: NAV,<turn>,<stepDist>,<initDist>,<remKm>,<totKm>,<hr>,<min>,<theme>,<speed>,<road>
-    const payload = `NAV,${turnType},${distMeters},${initDist},${remKm},${totalTripKm},${now.getHours()},${now.getMinutes()},${currentThemeMode},${liveSpeedKmh},${cleanRoad}\n`;
+    // NAV Protocol: NAV,<turn>,<dist>,<initDist>,<remKm>,<totKm>,<hr>,<min>,<theme>,<speed>,<temp>,<rain>,<road>
+    const payload = `NAV,${turnType},${distMeters},${initDist},${remKm},${totalTripKm},${now.getHours()},${now.getMinutes()},${currentThemeMode},${liveSpeedKmh},${ambientTemp},${rainActive},${cleanRoad}\n`;
     writeBLE(payload);
   }
 
