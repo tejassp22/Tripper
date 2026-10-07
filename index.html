@@ -118,7 +118,7 @@
       gap: 6px;
     }
     .limit-input {
-      width: 52px;
+      width: 50px;
       background: #000;
       border: 1px solid var(--border);
       border-radius: 6px;
@@ -137,6 +137,37 @@
       font-size: 0.72rem;
       font-weight: 600;
       cursor: pointer;
+    }
+
+    /* Brightness Controls */
+    .bri-strip {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 8px 12px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 0.8rem;
+    }
+    .bri-buttons {
+      display: flex;
+      gap: 6px;
+    }
+    .btn-bri {
+      background: #21262d;
+      color: #c9d1d9;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 4px 10px;
+      font-size: 0.72rem;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .btn-bri:active, .btn-bri.active {
+      background: var(--accent-blue);
+      color: #fff;
+      border-color: var(--accent-blue);
     }
 
     .search-container {
@@ -290,6 +321,16 @@
     <div>Weather: <b id="weatherTemp">--</b>°C</div>
   </div>
 
+  <!-- Screen Brightness Controls -->
+  <div class="bri-strip">
+    <span style="color:var(--text-dim); font-weight:600;">Display Brightness:</span>
+    <div class="bri-buttons">
+      <button class="btn-bri" onclick="setBrightness(25, this)">25%</button>
+      <button class="btn-bri" onclick="setBrightness(60, this)">60%</button>
+      <button class="btn-bri active" onclick="setBrightness(100, this)">100%</button>
+    </div>
+  </div>
+
   <div class="row">
     <button id="btnConnect" onclick="toggleConnection()">Connect BLE</button>
     <button class="secondary" onclick="centerOnUser()">My Location</button>
@@ -333,6 +374,12 @@
   let navCharacteristic = null;
   let currentThemeMode = 0;
   let speedLimitKmh = 60;
+
+  function setBrightness(percent, btnEl) {
+    document.querySelectorAll('.btn-bri').forEach(b => b.classList.remove('active'));
+    if (btnEl) btnEl.classList.add('active');
+    writeBLE(`BRI,${percent}\n`);
+  }
 
   function updateLimit() {
     const val = parseInt(document.getElementById("speedLimitInput").value);
@@ -697,7 +744,6 @@
             const distM = getDistanceMeters(lastGpsLat, lastGpsLon, userLat, userLon);
             if (distM >= 1.2) {
               calculatedSpeed = Math.round((distM / timeDeltaSec) * 3.6);
-              // Send distance delta to hardware odometer
               writeBLE(`ODO,${distM.toFixed(1)}\n`);
             }
           }
@@ -795,7 +841,7 @@
     const initDist = Math.round(activeStep.distance) || distMeters;
 
     let remDistMeters = distMeters;
-    for (let i = currentStepIdx + 1; i < routeSteps.length; i++) {
+    for (int i = currentStepIdx + 1; i < routeSteps.length; i++) {
       remDistMeters += routeSteps[i].distance;
     }
     const remKm = (remDistMeters / 1000.0).toFixed(1);
