@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>Tripper Route Mapper</title>
+  <title>Tripper Navigator</title>
 
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
   <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
@@ -208,7 +208,7 @@
 
 <div class="container">
   <header>
-    <h1>Hunter 350 Route Mapper</h1>
+    <h1>Tejas's Hunter 350</h1>
     <div class="header-actions">
       <button id="btnThemeToggle" class="btn-theme" onclick="toggleTheme()">☀️ Day</button>
       <div id="statusBadge" class="status-badge">DISCONNECTED</div>
@@ -221,7 +221,7 @@
       <div class="telemetry-value"><span id="speedVal">0</span> <small style="font-size:0.75rem; color:var(--text-dim);">km/h</small></div>
     </div>
     <div class="telemetry-card">
-      <div class="telemetry-label">Display Mode</div>
+      <div class="telemetry-label">Mode</div>
       <div class="telemetry-value" id="statusVal" style="font-size: 1rem; padding-top: 4px; color: var(--accent-blue);">Idle Speedo</div>
     </div>
   </div>
@@ -242,7 +242,7 @@
   <div id="map"></div>
 
   <div class="row" id="navControlRow" style="display: none;">
-    <button id="btnStartNav" class="start-nav" onclick="startNavigation()">Start Route Lines</button>
+    <button id="btnStartNav" class="start-nav" onclick="startNavigation()">Start Navigation</button>
     <button class="secondary" onclick="cancelRoute()">Clear</button>
   </div>
 
@@ -262,7 +262,6 @@
   let navCharacteristic = null;
   let currentThemeMode = 0; // 0 = Day/White, 1 = Night/Black
   let liveSpeedKmh = 0;
-  let userHeading = 0;
 
   function toggleTheme() {
     currentThemeMode = currentThemeMode === 0 ? 1 : 0;
@@ -278,7 +277,7 @@
 
     try {
       if (!navigator.bluetooth) {
-        alert("Web Bluetooth not found. Open this in Bluefy on iOS.");
+        alert("Web Bluetooth not found. Open in Bluefy on iOS.");
         return;
       }
 
@@ -317,15 +316,11 @@
     }
   }
 
-  // ===========================================================
-  // MAP, SEARCH & ROUTE GEOMETRY
-  // ===========================================================
   let map, userMarker, destMarker, routeLine;
   let userLat = null, userLon = null;
   let targetLat = null, targetLon = null, targetName = "Destination";
 
   let isNavigating = false;
-  let fullRouteCoords = []; // All [lon, lat] points along the route
   let routeSteps = [];
   let currentStepIdx = 0;
   let totalTripKm = 0;
@@ -441,7 +436,6 @@
 
       const route = data.routes[0];
       totalTripKm = (route.distance / 1000.0).toFixed(1);
-      fullRouteCoords = route.geometry.coordinates; // [[lon, lat], ...]
       routeSteps = route.legs[0].steps;
       currentStepIdx = 0;
 
@@ -463,10 +457,10 @@
   function startNavigation() {
     isNavigating = true;
     const btn = document.getElementById("btnStartNav");
-    btn.textContent = "Stop Route Lines";
+    btn.textContent = "Stop Navigation";
     btn.className = "stop-nav";
     btn.onclick = stopNavigation;
-    document.getElementById("statusVal").textContent = "Route Lines Active";
+    document.getElementById("statusVal").textContent = "Navigating";
     document.getElementById("statusVal").style.color = "var(--accent-green)";
 
     centerOnUser();
@@ -476,7 +470,7 @@
   function stopNavigation() {
     isNavigating = false;
     const btn = document.getElementById("btnStartNav");
-    btn.textContent = "Start Route Lines";
+    btn.textContent = "Start Navigation";
     btn.className = "start-nav";
     btn.onclick = startNavigation;
     document.getElementById("statusVal").textContent = "Idle Speedo";
@@ -490,7 +484,6 @@
     stopNavigation();
     if (destMarker) map.removeLayer(destMarker);
     if (routeLine) map.removeLayer(routeLine);
-    fullRouteCoords = [];
     routeSteps = [];
     document.getElementById("navControlRow").style.display = "none";
     document.getElementById("distText").textContent = "-- m";
@@ -500,8 +493,6 @@
   function startGpsTracking() {
     if (!navigator.geolocation) return;
 
-    let lastLat = null, lastLon = null;
-
     navigator.geolocation.watchPosition(
       (pos) => {
         userLat = pos.coords.latitude;
@@ -510,18 +501,6 @@
         const rawSpeed = pos.coords.speed;
         liveSpeedKmh = (rawSpeed && rawSpeed > 0.5) ? Math.round(rawSpeed * 3.6) : 0;
         document.getElementById("speedVal").textContent = liveSpeedKmh;
-
-        // Estimate heading if compass heading is not available
-        if (pos.coords.heading !== null && !isNaN(pos.coords.heading)) {
-          userHeading = pos.coords.heading;
-        } else if (lastLat !== null && lastLon !== null) {
-          const d = getDistanceMeters(lastLat, lastLon, userLat, userLon);
-          if (d > 2) {
-            userHeading = calculateBearing(lastLat, lastLon, userLat, userLon);
-          }
-        }
-        lastLat = userLat;
-        lastLon = userLon;
 
         if (!userMarker) {
           userMarker = L.circleMarker([userLat, userLon], {
@@ -555,60 +534,15 @@
     }
   }
 
-  // ===========================================================
-  // VECTOR ROUTE PROJECTION ENGINE
-  // Projects upcoming world GPS coordinates relative to bike heading
-  // into 240x240 screen coordinates centered at (120, 145)
-  // ===========================================================
-  function getProjectedRoutePoints(maxPoints = 8) {
-    if (!fullRouteCoords || fullRouteCoords.length === 0 || !userLat || !userLon) return [];
+  function mapManeuverToTripper(maneuver) {
+    const type = maneuver.type;
+    const modifier = maneuver.modifier || "";
 
-    // 1. Find closest coordinate index on route
-    let closestIdx = 0;
-    let minDist = Infinity;
-    for (let i = 0; i < fullRouteCoords.length; i++) {
-      const d = getDistanceMeters(userLat, userLon, fullRouteCoords[i][1], fullRouteCoords[i][0]);
-      if (d < minDist) {
-        minDist = d;
-        closestIdx = i;
-      }
-    }
-
-    const points = [];
-    // Start at bike position on display (120, 145)
-    points.push({ x: 120, y: 145 });
-
-    // Look ahead 250 meters along the route
-    const LOOKAHEAD_METERS = 250.0;
-    const PIXEL_SCALE = 70.0 / LOOKAHEAD_METERS; // 70px vertical reach on screen
-
-    const radH = (userHeading * Math.PI) / 180.0;
-    const cosH = Math.cos(radH);
-    const sinH = Math.sin(radH);
-
-    for (let i = closestIdx + 1; i < fullRouteCoords.length && points.length < maxPoints; i++) {
-      const ptLon = fullRouteCoords[i][0];
-      const ptLat = fullRouteCoords[i][1];
-
-      // Local flat-earth offsets in meters from user
-      const dY = (ptLat - userLat) * 111139.0;
-      const dX = (ptLon - userLon) * 111139.0 * Math.cos((userLat * Math.PI) / 180.0);
-
-      // Rotate offsets so userHeading points straight UP (-Y)
-      const forwardMeters = dX * sinH + dY * cosH;
-      const rightMeters   = dX * cosH - dY * sinH;
-
-      const screenX = Math.round(120 + rightMeters * PIXEL_SCALE);
-      const screenY = Math.round(145 - forwardMeters * PIXEL_SCALE);
-
-      // Only push points with meaningful separation
-      const prev = points[points.length - 1];
-      if (Math.hypot(screenX - prev.x, screenY - prev.y) > 6) {
-        points.push({ x: screenX, y: screenY });
-      }
-    }
-
-    return points;
+    if (type.includes("roundabout") || type.includes("rotary")) return 4;
+    if (modifier.includes("left")) return 1;
+    if (modifier.includes("right")) return 2;
+    if (modifier.includes("u-turn")) return 3;
+    return 0;
   }
 
   function evaluateNavigation(forcePush = false) {
@@ -633,8 +567,12 @@
     }
 
     const activeStep = routeSteps[currentStepIdx];
+    const turnType = mapManeuverToTripper(activeStep.maneuver);
+    
     let cleanRoad = (activeStep.name || targetName || "Road").split(',')[0].trim();
     if (cleanRoad.length > 18) cleanRoad = cleanRoad.substring(0, 18);
+
+    const initDist = Math.round(activeStep.distance) || distMeters;
 
     let remDistMeters = distMeters;
     for (let i = currentStepIdx + 1; i < routeSteps.length; i++) {
@@ -646,15 +584,8 @@
     document.getElementById("distText").textContent = `${distMeters} m`;
     document.getElementById("remDistText").textContent = `${remKm} km`;
 
-    // Generate upcoming road polyline points
-    const pts = getProjectedRoutePoints(8);
-    let ptsPayload = `${pts.length}`;
-    pts.forEach(p => {
-      ptsPayload += `,${p.x},${p.y}`;
-    });
-
-    // PATH Protocol: PATH,<Dist>,<Speed>,<Theme>,<Count>,x0,y0,x1,y1...<Road>
-    const payload = `PATH,${distMeters},${liveSpeedKmh},${currentThemeMode},${ptsPayload},${cleanRoad}\n`;
+    // NAV Protocol: NAV,<turn>,<stepDist>,<initDist>,<remKm>,<totKm>,<hr>,<min>,<theme>,<speed>,<road>
+    const payload = `NAV,${turnType},${distMeters},${initDist},${remKm},${totalTripKm},${now.getHours()},${now.getMinutes()},${currentThemeMode},${liveSpeedKmh},${cleanRoad}\n`;
     writeBLE(payload);
   }
 
@@ -666,13 +597,6 @@
               Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) *
               Math.sin(dLon/2) * Math.sin(dLon/2);
     return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
-  }
-
-  function calculateBearing(lat1, lon1, lat2, lon2) {
-    const y = Math.sin((lon2 - lon1) * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180);
-    const x = Math.cos(lat1 * Math.PI / 180) * Math.sin(lat2 * Math.PI / 180) -
-              Math.sin(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * Math.cos((lon2 - lon1) * Math.PI / 180);
-    return ((Math.atan2(y, x) * 180 / Math.PI) + 360) % 360;
   }
 
   window.addEventListener('load', () => {
