@@ -315,6 +315,11 @@
 </head>
 <body>
 
+<!-- Hidden silent audio keeper: Maintains background WebKit/JS execution thread -->
+<audio id="bgAudioKeeper" loop playsinline preload="auto">
+  <source src="data:audio/wav;base64,UklGRigAAABXQVZFZm10IBAAAAABAAEARKwAAIhYAQACABAAZGF0YQQAAAAAAP8A" type="audio/wav">
+</audio>
+
 <div class="container">
   <header>
     <h1>Hunter 350 Navigator</h1>
@@ -425,6 +430,40 @@
   let speedLimitKmh = 60;
 
   // ===========================================================
+  // iOS SCREEN WAKE LOCK & BACKGROUND EXECUTION KEEPER
+  // ===========================================================
+  let screenWakeLock = null;
+
+  async function activateWakeLock() {
+    try {
+      if ('wakeLock' in navigator) {
+        screenWakeLock = await navigator.wakeLock.request('screen');
+        screenWakeLock.addEventListener('release', function() {
+          screenWakeLock = null;
+        });
+      }
+    } catch (err) {
+      console.warn("Wake Lock request failed:", err);
+    }
+  }
+
+  function startBackgroundAudioKeeper() {
+    const audio = document.getElementById("bgAudioKeeper");
+    if (audio) {
+      audio.volume = 0.01;
+      audio.play().catch(function(e) {
+        console.log("Audio keep-alive awaiting interaction:", e);
+      });
+    }
+  }
+
+  document.addEventListener('visibilitychange', async function() {
+    if (document.visibilityState === 'visible') {
+      await activateWakeLock();
+    }
+  });
+
+  // ===========================================================
   // GYROSCOPE & LEAN TELEMETRY PIPELINE
   // ===========================================================
   let zeroCalibrationOffset = 0.0;
@@ -465,7 +504,6 @@
     window.addEventListener('deviceorientation', function(e) {
       if (e.gamma === null) return;
 
-      // In portrait mount, gamma represents lateral roll
       let rawRoll = e.gamma - zeroCalibrationOffset;
       currentRollAngle = Math.round(rawRoll);
 
@@ -485,7 +523,6 @@
 
     window.addEventListener('devicemotion', function(e) {
       if (e.accelerationIncludingGravity && e.accelerationIncludingGravity.x !== null) {
-        // x represents lateral acceleration in portrait
         currentLateralG = parseFloat((e.accelerationIncludingGravity.x / 9.80665).toFixed(2));
         document.getElementById("liveGVal").textContent = Math.abs(currentLateralG).toFixed(2) + " G";
       }
@@ -494,7 +531,6 @@
 
   function streamGyroOverBle() {
     const now = Date.now();
-    // Stream at ~15 Hz (every 66 ms)
     if (now - lastGyroBleTime >= 66 && navCharacteristic) {
       lastGyroBleTime = now;
       const packet = "GYRO," + currentRollAngle + "," + maxLeftAngle + "," + maxRightAngle + "," + currentLateralG.toFixed(2) + "\n";
@@ -529,6 +565,9 @@
   }
 
   async function toggleConnection() {
+    activateWakeLock();
+    startBackgroundAudioKeeper();
+
     if (bleDevice && bleDevice.gatt && bleDevice.gatt.connected) {
       bleDevice.gatt.disconnect();
       return;
@@ -536,7 +575,7 @@
 
     try {
       if (!navigator.bluetooth) {
-        alert("Web Bluetooth not found. Open in Bluefy on iOS.");
+        alert("Web Bluetooth not found. Open inside Bluefy on iOS.");
         return;
       }
 
@@ -560,7 +599,7 @@
       document.getElementById("btnConnect").textContent = "Disconnect";
 
       evaluateNavigation(true);
-      enableSensors(); // Auto-prompt sensors upon connection
+      enableSensors();
     } catch (err) {
       alert("BLE Error: " + err.message);
     }
@@ -638,7 +677,7 @@
 
   function exportGPX() {
     if (recordedGpxTrack.length === 0) {
-      alert("No recorded track points!");
+      alert("No recorded track points available!");
       return;
     }
 
@@ -810,6 +849,9 @@
   }
 
   function startNavigation() {
+    activateWakeLock();
+    startBackgroundAudioKeeper();
+
     isNavigating = true;
     tripStartTime = Date.now();
     recordedGpxTrack = [];
