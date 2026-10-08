@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>Tripper Vector Map Tester</title>
+
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css" />
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+
+  <style>
+    :root {
+      --bg: #0b0e14;
+      --card: #151a24;
+      --accent: #2979ff;
+      --accent-green: #00e676;
+      --text: #f0f6fc;
+      --border: #2d3748;
+    }
+    * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    body {
+      background-color: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    .container {
+      width: 100%;
+      max-width: 480px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+    h1 {
+      font-size: 1rem;
+      margin: 0;
+      text-transform: uppercase;
+      letter-spacing: 1px;
+    }
+    .status-badge {
+      font-size: 0.72rem;
+      font-weight: 600;
+      padding: 4px 10px;
+      border-radius: 12px;
+      background: #21262d;
+      color: #8b949e;
+    }
+    .status-badge.connected {
+      background: #093c1d;
+      color: var(--accent-green);
+    }
+    #map {
+      width: 100%;
+      height: 320px;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background: #1b1f24;
+    }
+    .row {
+      display: flex;
+      gap: 8px;
+    }
+    button {
+      flex: 1;
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      padding: 12px;
+      font-size: 0.9rem;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    button.secondary {
+      background: #21262d;
+      border: 1px solid var(--border);
+    }
+    button.success {
+      background: var(--accent-green);
+      color: #000;
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 12px;
+      font-size: 0.85rem;
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+  </style>
+</head>
+<body>
+
+<div class="container">
+  <header>
+    <h1>Vector Map HUD Tester</h1>
+    <div id="statusBadge" class="status-badge">DISCONNECTED</div>
+  </header>
+
+  <div class="row">
+    <button id="btnConnect" onclick="toggleConnect()">Connect Tripper-MapTest</button>
+    <button class="secondary" onclick="centerUser()">Locate Me</button>
+  </div>
+
+  <div id="map"></div>
+
+  <div class="row" id="routeActions" style="display:none;">
+    <button class="success" onclick="startSimulatedRoute()">Send Route Vector to Screen</button>
+  </div>
+
+  <div class="card">
+    <div>Tap anywhere on the map to plot a destination.</div>
+    <div style="color:#8b949e;">Status: <b id="statText" style="color:#fff;">Waiting for GPS...</b></div>
+  </div>
+</div>
+
+<script>
+  const SERVICE_UUID = "4fafc201-1fb5-459e-8fcc-c5c9c331914b";
+  const CHAR_UUID    = "beb5483e-36e1-4688-b7f5-ea07361b26a8";
+
+  let bleDevice = null;
+  let mapChar = null;
+
+  let map = null, userMarker = null, destMarker = null, routeLine = null;
+  let userLat = 19.0760, userLon = 72.8777; // Default initial coords (Mumbai)
+  let routeCoordinates = [];
+  let currentETA = "Arrive 3:31 PM";
+  let nextInstruction = "Head toward Alaka Marg";
+  let turnTypeIdx = 0; // 0: Straight, 1: Left, 2: Right
+
+  function initMap() {
+    map = L.map('map', { zoomControl: false }).setView([userLat, userLon], 14);
+    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
+
+    map.on('click', function(e) {
+      setDestination(e.latlng.lat, e.latlng.lng);
+    });
+
+    if (navigator.geolocation) {
+      navigator.geolocation.getCurrentPosition(function(pos) {
+        userLat = pos.coords.latitude;
+        userLon = pos.coords.longitude;
+        map.setView([userLat, userLon], 15);
+        userMarker = L.circleMarker([userLat, userLon], { radius: 8, fillColor: "#2979ff", color: "#fff", fillOpacity: 1 }).addTo(map);
+        document.getElementById("statText").textContent = "GPS Locked. Tap map to route.";
+      });
+    }
+  }
+
+  function centerUser() {
+    if (map) map.setView([userLat, userLon], 16);
+  }
+
+  async function setDestination(lat, lon) {
+    if (destMarker) map.removeLayer(destMarker);
+    destMarker = L.marker([lat, lon]).addTo(map);
+
+    document.getElementById("statText").textContent = "Calculating vector path...";
+
+    const url = "https://router.project-osrm.org/route/v1/driving/" + userLon + "," + userLat + ";" + lon + "," + lat + "?overview=full&geometries=geojson&steps=true";
+    try {
+      const res = await fetch(url);
+      const data = await res.json();
+      if (!data.routes || data.routes.length === 0) return;
+
+      const route = data.routes[0];
+      routeCoordinates = route.geometry.coordinates;
+
+      if (routeLine) map.removeLayer(routeLine);
+      routeLine = L.geoJSON(route.geometry, { style: { color: '#00e676', weight: 5 } }).addTo(map);
+      map.fitBounds(routeLine.getBounds(), { padding: [40, 40] });
+
+      // Calculate ETA
+      const durationSec = route.duration || 600;
+      const etaDate = new Date(Date.now() + durationSec * 1000);
+      let hours = etaDate.getHours();
+      const minutes = String(etaDate.getMinutes()).padStart(2, '0');
+      const ampm = hours >= 12 ? 'PM' : 'AM';
+      hours = hours % 12 || 12;
+      currentETA = "Arrive " + hours + ":" + minutes + " " + ampm;
+
+      if (route.legs[0].steps && route.legs[0].steps.length > 1) {
+        nextInstruction = route.legs[0].steps[1].name || route.legs[0].steps[1].maneuver.instruction || "Next Turn";
+        const mod = route.legs[0].steps[1].maneuver.modifier || "";
+        turnTypeIdx = mod.includes("left") ? 1 : (mod.includes("right") ? 2 : 0);
+      }
+
+      document.getElementById("routeActions").style.display = "flex";
+      document.getElementById("statText").textContent = "Route Ready. Click button below to stream.";
+    } catch (e) {
+      alert("Routing error: " + e.message);
+    }
+  }
+
+  // ===========================================================
+  // Convert GPS Coordinates to Relative 240x240 Display Pixels
+  // ===========================================================
+  function startSimulatedRoute() {
+    if (!mapChar) {
+      alert("Connect BLE first!");
+      return;
+    }
+
+    // 1. Send HUD Meta
+    const hudPacket = "HUD," + currentETA + "," + turnTypeIdx + "," + nextInstruction + "\n";
+    writeBLE(hudPacket);
+
+    // 2. Select next 10 coordinates and scale relative to center (120, 120)
+    let mapPacket = "MAP";
+    const sampleCount = Math.min(10, routeCoordinates.length);
+    for (let i = 0; i < sampleCount; i++) {
+      const coord = routeCoordinates[i];
+      // Normalize difference to roughly -60 to +60 pixels
+      const dx = Math.round((coord[0] - userLon) * 18000);
+      const dy = Math.round((coord[1] - userLat) * 18000);
+
+      const px = Math.max(20, Math.min(220, 120 + dx));
+      const py = Math.max(40, Math.min(190, 120 - dy)); // Inverted Y for screen space
+
+      mapPacket += "," + px + "," + py;
+    }
+    mapPacket += "\n";
+
+    writeBLE(mapPacket);
+    document.getElementById("statText").textContent = "Vector path streamed to ST7789 display!";
+  }
+
+  async function toggleConnect() {
+    try {
+      bleDevice = await navigator.bluetooth.requestDevice({
+        acceptAllDevices: true,
+        optionalServices: [SERVICE_UUID]
+      });
+
+      const server = await bleDevice.gatt.connect();
+      const service = await server.getPrimaryService(SERVICE_UUID);
+      mapChar = await service.getCharacteristic(CHAR_UUID);
+
+      document.getElementById("statusBadge").textContent = "CONNECTED";
+      document.getElementById("statusBadge").classList.add("connected");
+      document.getElementById("btnConnect").textContent = "Disconnect";
+    } catch (e) {
+      alert("BLE Error: " + e.message);
+    }
+  }
+
+  async function writeBLE(str) {
+    if (!mapChar) return;
+    const encoder = new TextEncoder();
+    await mapChar.writeValue(encoder.encode(str));
+  }
+
+  window.addEventListener('DOMContentLoaded', initMap);
+</script>
+
+</body>
+</html>
