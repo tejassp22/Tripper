@@ -3,514 +3,435 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-  <title>Hunter 350 Tripper Dashboard</title>
-
-  <!-- Leaflet CSS & JS (Free OSM - No Mapbox Token Required) -->
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-
+  <title>Tripper BLE & Spotify Controller</title>
   <style>
-    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-    body { background: #0f1115; color: #fff; display: flex; flex-direction: column; align-items: center; min-height: 100vh; padding: 14px; }
-    h1 { color: #d80000; font-size: 1.3rem; letter-spacing: 1px; margin-bottom: 12px; text-transform: uppercase; }
-    .card { background: #181b22; width: 100%; max-width: 480px; border-radius: 12px; padding: 14px; margin-bottom: 12px; border: 1px solid #272c38; }
-    .btn { display: block; width: 100%; padding: 12px; font-size: 0.95rem; font-weight: 600; border-radius: 8px; border: none; cursor: pointer; margin-bottom: 8px; text-align: center; }
-    .btn-ble { background: #007aff; color: white; }
-    .btn-spotify { background: #1db954; color: white; }
-    .btn-summary { background: #ff9500; color: white; }
-    .btn-route { background: #238636; color: white; margin-top: 6px; }
-    .btn-disabled { background: #262b36; color: #6e7687; cursor: not-allowed; border: 1px solid #363d4e; }
-    .status-row { display: flex; justify-content: space-between; font-size: 0.85rem; padding: 5px 0; border-bottom: 1px solid #212631; }
-    .status-val { font-weight: 600; color: #00e5ff; }
-    #map { width: 100%; height: 260px; border-radius: 10px; margin-top: 8px; border: 1px solid #2e3545; z-index: 1; }
-    .search-box { display: flex; gap: 6px; margin-top: 6px; }
-    .search-box input { flex: 1; padding: 10px; border-radius: 6px; border: 1px solid #30363d; background: #0d1117; color: #fff; font-size: 0.9rem; }
-    .search-results { background: #161b22; border: 1px solid #30363d; border-radius: 6px; max-height: 120px; overflow-y: auto; margin-top: 4px; display: none; }
-    .search-item { padding: 8px; font-size: 0.85rem; border-bottom: 1px solid #21262d; cursor: pointer; }
-    .search-item:hover { background: #21262d; }
-    .slider-container { display: flex; align-items: center; justify-content: space-between; margin-top: 8px; font-size: 0.85rem; }
-    .slider { width: 65%; accent-color: #d80000; }
+    :root {
+      --bg: #121212;
+      --card: #1e1e1e;
+      --accent: #d80000;
+      --spotify: #1db954;
+      --text: #ffffff;
+      --text-dim: #888888;
+      --border: #2d2d2d;
+    }
+    * { box-sizing: border-box; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    body {
+      background-color: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    .container {
+      width: 100%;
+      max-width: 420px;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+    }
+    h1 {
+      font-size: 1.3rem;
+      margin: 4px 0;
+      text-align: center;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+    }
+    .status-badge {
+      text-align: center;
+      font-size: 0.8rem;
+      font-weight: 600;
+      padding: 6px 12px;
+      border-radius: 20px;
+      background: #2a2a2a;
+      color: var(--text-dim);
+      align-self: center;
+    }
+    .status-badge.connected {
+      background: #004d20;
+      color: #00e676;
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    label {
+      font-size: 0.75rem;
+      font-weight: 600;
+      color: var(--text-dim);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    input, select {
+      width: 100%;
+      background: #2a2a2a;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 10px;
+      color: #fff;
+      font-size: 0.95rem;
+      outline: none;
+    }
+    input:focus, select:focus {
+      border-color: var(--accent);
+    }
+    .row {
+      display: flex;
+      gap: 10px;
+    }
+    .row > div {
+      flex: 1;
+    }
+    button {
+      background: var(--accent);
+      color: #fff;
+      border: none;
+      border-radius: 8px;
+      padding: 14px;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      letter-spacing: 0.5px;
+      transition: opacity 0.15s;
+    }
+    button:active {
+      opacity: 0.8;
+    }
+    button.spotify-btn {
+      background: var(--spotify);
+    }
+    button.secondary {
+      background: #2a2a2a;
+      border: 1px solid var(--border);
+    }
+    .preview-box {
+      font-family: monospace;
+      font-size: 0.75rem;
+      background: #000;
+      border-radius: 6px;
+      padding: 8px;
+      color: #00e676;
+      word-break: break-all;
+    }
+    .spotify-box {
+      background: #11141a;
+      border-radius: 8px;
+      padding: 10px;
+      border-left: 3px solid var(--spotify);
+      font-size: 0.85rem;
+    }
+    .spotify-title { font-weight: bold; color: #fff; }
+    .spotify-artist { color: var(--text-dim); }
   </style>
 </head>
 <body>
 
-  <h1>Hunter 350 Smart Dash</h1>
+<div class="container">
+  <h1>Tripper Controller</h1>
+  <div id="statusBadge" class="status-badge">DISCONNECTED</div>
+
+  <button id="btnConnect" onclick="toggleConnection()">Connect to Tripper</button>
+  <button id="btnSpotify" class="spotify-btn" onclick="authorizeSpotify()">Link Spotify Account</button>
 
   <div class="card">
-    <button id="bleBtn" class="btn btn-ble" onclick="connectBLE()">Connect Hunter Tripper</button>
-    <button id="spotifyBtn" class="btn btn-spotify" onclick="authorizeSpotify()">Link Spotify Account</button>
-    
-    <div class="status-row">
-      <span>Tripper BLE:</span>
-      <span id="bleStatus" class="status-val" style="color: #ff3b30;">Disconnected</span>
-    </div>
-    <div class="status-row">
-      <span>Spotify Sync:</span>
-      <span id="spotifyStatus" class="status-val" style="color: #ff3b30;">Unlinked</span>
-    </div>
-    <div class="status-row">
-      <span>Telemetry:</span>
-      <span id="telemStatus" class="status-val">Speed: 0 km/h | Lean: 0°</span>
-    </div>
-
-    <div class="slider-container">
-      <span>Display Brightness:</span>
-      <input type="range" min="10" max="100" value="100" class="slider" id="briSlider" oninput="sendBrightness(this.value)">
+    <label>Spotify Live Track</label>
+    <div class="spotify-box">
+      <div id="spTitle" class="spotify-title">Not Playing</div>
+      <div id="spArtist" class="spotify-artist">Waiting for track...</div>
+      <div id="spProgress" style="color: #00e5ff; font-size: 0.75rem; margin-top: 4px;">--:-- / --:--</div>
     </div>
   </div>
 
   <div class="card">
-    <div style="font-weight: 600; font-size: 0.85rem; color: #8892b0;">DESTINATION SEARCH</div>
-    <div class="search-box">
-      <input type="text" id="destInput" placeholder="Search destination (e.g. Bandra, Thane)..." oninput="searchLocation(this.value)">
+    <div>
+      <label for="turnSelect">Maneuver Type</label>
+      <select id="turnSelect" onchange="updatePreview()">
+        <option value="0">Straight (0)</option>
+        <option value="1" selected>Turn Left (1)</option>
+        <option value="2">Turn Right (2)</option>
+        <option value="3">U-Turn (3)</option>
+        <option value="4">Roundabout (4)</option>
+      </select>
     </div>
-    <div id="searchResults" class="search-results"></div>
 
-    <div id="map"></div>
-    <button class="btn btn-summary" style="margin-top: 10px;" onclick="finishTripAndSendSummary()">End Trip & View Summary</button>
+    <div class="row">
+      <div>
+        <label for="stepDist">Turn Dist (m)</label>
+        <input type="number" id="stepDist" value="450" oninput="updatePreview()">
+      </div>
+      <div>
+        <label for="stepInitDist">Initial Dist (m)</label>
+        <input type="number" id="stepInitDist" value="500" oninput="updatePreview()">
+      </div>
+    </div>
+
+    <div>
+      <label for="roadName">Road Name</label>
+      <input type="text" id="roadName" value="MG Road" maxlength="28" oninput="updatePreview()">
+    </div>
+
+    <div class="row">
+      <div>
+        <label for="remDist">Remaining (km)</label>
+        <input type="number" step="0.1" id="remDist" value="7.5" oninput="updatePreview()">
+      </div>
+      <div>
+        <label for="totalDist">Total (km)</label>
+        <input type="number" step="0.1" id="totalDist" value="10.0" oninput="updatePreview()">
+      </div>
+    </div>
+
+    <button onclick="sendManualPacket()">Send Update</button>
   </div>
 
-  <script>
-    const SPOTIFY_CLIENT_ID = "853f624535ad4ff3bf665a26c9a7dbbe";
-    const SPOTIFY_REDIRECT_URI = window.location.origin + window.location.pathname;
-    const SPOTIFY_SCOPES = "user-read-currently-playing user-read-playback-state";
+  <div class="card">
+    <label>Generated Payload</label>
+    <div id="preview" class="preview-box">NAV,...</div>
+  </div>
+</div>
 
-    const TRIPPER_SERVICE_UUID = "4fafc201-1fb5-459e-8fcc-c5c9c331914b";
-    const TRIPPER_CHAR_UUID    = "beb5483e-36e1-4688-b7f5-ea07361b26a8";
+<script>
+  const SERVICE_UUID = "4fafc201-1fb5-459e-8fcc-c5c9c331914b";
+  const CHARACTERISTIC_UUID = "beb5483e-36e1-4688-b7f5-ea07361b26a8";
 
-    let bleDevice = null;
-    let bleCharacteristic = null;
+  // Spotify PKCE Config
+  const SPOTIFY_CLIENT_ID = "853f624535ad4ff3bf665a26c9a7dbbe";
+  const SPOTIFY_REDIRECT_URI = window.location.origin + window.location.pathname;
+  const SPOTIFY_SCOPES = "user-read-currently-playing user-read-playback-state";
 
-    let currentSpeedKmh = 0;
-    let maxSpeedKmh = 0;
-    let speedSum = 0;
-    let speedSamples = 0;
-    let speedLimitKmh = 60;
-    let tripStartTime = Date.now();
+  let bleDevice = null;
+  let navCharacteristic = null;
+  let lastSpotifySig = "";
 
-    let ambientTempC = 28;
-    let rainAlert = 0;
+  function updateStatus(connected) {
+    const badge = document.getElementById("statusBadge");
+    const btn = document.getElementById("btnConnect");
+    if (connected) {
+      badge.textContent = "CONNECTED: " + (bleDevice.name || "Tripper");
+      badge.classList.add("connected");
+      btn.textContent = "Disconnect";
+      btn.classList.add("secondary");
+    } else {
+      badge.textContent = "DISCONNECTED";
+      badge.classList.remove("connected");
+      btn.textContent = "Connect to Tripper";
+      btn.classList.remove("secondary");
+    }
+  }
 
-    let currentLeanAngle = 0;
-    let maxLeanLeft = 0;
-    let maxLeanRight = 0;
+  function buildPayload() {
+    const turn = document.getElementById("turnSelect").value;
+    const stepDist = document.getElementById("stepDist").value || "0";
+    const initDist = document.getElementById("stepInitDist").value || "0";
+    const remDist = document.getElementById("remDist").value || "0.0";
+    const totDist = document.getElementById("totalDist").value || "0.0";
+    const road = document.getElementById("roadName").value || "Road";
 
-    let totalTripDistanceMeters = 0;
-    let lastPosition = null;
-    let lastGpsTimestamp = null;
+    const now = new Date();
+    const hr = now.getHours();
+    const min = now.getMinutes();
 
-    let routeSteps = [];
-    let currentStepIndex = 0;
-    let remainingTripMeters = 0;
-    let currentRoadName = "Ride Safe";
-    let currentTurnCode = 0; // 0=Straight, 1=Left, 2=Right, 3=UTurn, 4=Roundabout
-    let stepDistMeters = 0;
+    return `NAV,${turn},${stepDist},${initDist},${remDist},${totDist},${hr},${min},${road}\n`;
+  }
 
-    let lastSentSpotifySig = "";
+  function updatePreview() {
+    document.getElementById("preview").textContent = buildPayload().trim();
+  }
 
-    // ============================================================
-    // BLE CONNECTION
-    // ============================================================
-    async function connectBLE() {
-      try {
-        document.getElementById("bleStatus").innerText = "Searching...";
-        bleDevice = await navigator.bluetooth.requestDevice({
-          filters: [{ name: "Hunter Tripper" }],
-          optionalServices: [TRIPPER_SERVICE_UUID]
-        });
-
-        bleDevice.addEventListener('gattserverdisconnected', onDisconnected);
-        const server = await bleDevice.gatt.connect();
-        const service = await server.getPrimaryService(TRIPPER_SERVICE_UUID);
-        bleCharacteristic = await service.getCharacteristic(TRIPPER_CHAR_UUID);
-
-        document.getElementById("bleStatus").innerText = "Connected";
-        document.getElementById("bleStatus").style.color = "#34c759";
-        document.getElementById("bleBtn").innerText = "Tripper Connected";
-        document.getElementById("bleBtn").className = "btn btn-disabled";
-        document.getElementById("bleBtn").disabled = true;
-      } catch (err) {
-        console.error("BLE Error:", err);
-        document.getElementById("bleStatus").innerText = "Failed";
-        document.getElementById("bleStatus").style.color = "#ff3b30";
-      }
+  async function toggleConnection() {
+    if (bleDevice && bleDevice.gatt.connected) {
+      bleDevice.gatt.disconnect();
+      return;
     }
 
-    function onDisconnected() {
-      document.getElementById("bleStatus").innerText = "Disconnected";
-      document.getElementById("bleStatus").style.color = "#ff3b30";
-      document.getElementById("bleBtn").innerText = "Reconnect Tripper";
-      document.getElementById("bleBtn").className = "btn btn-ble";
-      document.getElementById("bleBtn").disabled = false;
-      bleCharacteristic = null;
-    }
-
-    async function sendBlePacket(packetStr) {
-      if (!bleCharacteristic) return;
-      try {
-        const encoder = new TextEncoder();
-        await bleCharacteristic.writeValue(encoder.encode(packetStr));
-      } catch (e) {
-        console.error("BLE Send Error:", e);
-      }
-    }
-
-    function sendBrightness(val) {
-      sendBlePacket(`BRI,${val}\n`);
-    }
-
-    // ============================================================
-    // LEAFLET MAP & OSRM FREE ROUTING
-    // ============================================================
-    const map = L.map('map').setView([19.0760, 72.8777], 13);
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      maxZoom: 19,
-      attribution: '© OpenStreetMap'
-    }).addTo(map);
-
-    let userMarker = null;
-    let routePolyline = null;
-
-    async function searchLocation(query) {
-      if (query.length < 3) {
-        document.getElementById("searchResults").style.display = "none";
+    try {
+      if (!navigator.bluetooth) {
+        alert("Web Bluetooth not found. Use the 'Bluefy' browser app on iOS.");
         return;
       }
-      try {
-        const res = await fetch(`https://photon.komoot.io/api/?q=${encodeURIComponent(query)}&limit=4`);
-        const data = await res.json();
-        const resultsBox = document.getElementById("searchResults");
-        resultsBox.innerHTML = "";
-        if (data.features && data.features.length > 0) {
-          resultsBox.style.display = "block";
-          data.features.forEach(f => {
-            const name = f.properties.name || f.properties.street || "Location";
-            const city = f.properties.city || f.properties.state || "";
-            const div = document.createElement("div");
-            div.className = "search-item";
-            div.innerText = `${name}, ${city}`;
-            div.onclick = () => {
-              const coords = f.geometry.coordinates;
-              calculateOsrmRoute(coords[1], coords[0]);
-              resultsBox.style.display = "none";
-            };
-            resultsBox.appendChild(div);
-          });
-        }
-      } catch (err) {
-        console.warn("Geocoding failed:", err);
-      }
-    }
 
-    async function calculateOsrmRoute(destLat, destLon) {
-      if (!lastPosition) {
-        alert("Waiting for GPS position...");
-        return;
-      }
-      const url = `https://router.project-osrm.org/route/v1/driving/${lastPosition.lon},${lastPosition.lat};${destLon},${destLat}?overview=full&geometries=geojson&steps=true`;
-      try {
-        const res = await fetch(url);
-        const data = await res.json();
-        if (data.routes && data.routes.length > 0) {
-          const route = data.routes[0];
-          totalTripDistanceMeters = Math.round(route.distance);
-          remainingTripMeters = totalTripDistanceMeters;
-
-          routeSteps = route.legs[0].steps;
-          currentStepIndex = 0;
-          parseCurrentStep();
-
-          if (routePolyline) map.removeLayer(routePolyline);
-          const latLngs = route.geometry.coordinates.map(c => [c[1], c[0]]);
-          routePolyline = L.polyline(latLngs, { color: '#00e5ff', weight: 5 }).addTo(map);
-          map.fitBounds(routePolyline.getBounds());
-        }
-      } catch (e) {
-        console.error("OSRM Route Error:", e);
-      }
-    }
-
-    function parseCurrentStep() {
-      if (currentStepIndex >= routeSteps.length) {
-        routeSteps = [];
-        return;
-      }
-      const step = routeSteps[currentStepIndex];
-      stepDistMeters = Math.round(step.distance);
-      currentRoadName = (step.name || "Ride Safe").replace(/,/g, ' ').substring(0, 22);
-      
-      const modifier = (step.maneuver && step.maneuver.modifier) || "";
-      const type = (step.maneuver && step.maneuver.type) || "";
-
-      if (type.includes("roundabout")) currentTurnCode = 4;
-      else if (modifier.includes("u-turn")) currentTurnCode = 3;
-      else if (modifier.includes("left")) currentTurnCode = 1;
-      else if (modifier.includes("right")) currentTurnCode = 2;
-      else currentTurnCode = 0;
-    }
-
-    // ============================================================
-    // GPS & SPEED ENGINE
-    // ============================================================
-    if ("geolocation" in navigator) {
-      navigator.geolocation.watchPosition(
-        (pos) => {
-          const lat = pos.coords.latitude;
-          const lon = pos.coords.longitude;
-          const nowTs = pos.timestamp || Date.now();
-
-          if (!userMarker) {
-            userMarker = L.circleMarker([lat, lon], { color: '#d80000', radius: 8 }).addTo(map);
-          } else {
-            userMarker.setLatLng([lat, lon]);
-          }
-
-          let calculatedSpeedKmh = 0;
-          if (pos.coords.speed !== null && !isNaN(pos.coords.speed) && pos.coords.speed >= 0) {
-            calculatedSpeedKmh = Math.round(pos.coords.speed * 3.6);
-          } else if (lastPosition && lastGpsTimestamp) {
-            const timeDeltaSec = (nowTs - lastGpsTimestamp) / 1000;
-            const distM = calculateDistanceMeters(lastPosition.lat, lastPosition.lon, lat, lon);
-            if (timeDeltaSec > 0.4 && timeDeltaSec < 6.0 && distM > 1.5) {
-              calculatedSpeedKmh = Math.round((distM / timeDeltaSec) * 3.6);
-            }
-          }
-
-          currentSpeedKmh = calculatedSpeedKmh;
-          if (currentSpeedKmh > maxSpeedKmh) maxSpeedKmh = currentSpeedKmh;
-          speedSum += currentSpeedKmh;
-          speedSamples++;
-
-          if (lastPosition) {
-            const distDelta = calculateDistanceMeters(lastPosition.lat, lastPosition.lon, lat, lon);
-            if (distDelta > 2 && distDelta < 500) {
-              sendBlePacket(`ODO,${Math.round(distDelta)}\n`);
-              if (routeSteps.length > 0) {
-                stepDistMeters = Math.max(0, stepDistMeters - Math.round(distDelta));
-                remainingTripMeters = Math.max(0, remainingTripMeters - Math.round(distDelta));
-                if (stepDistMeters <= 15) {
-                  currentStepIndex++;
-                  parseCurrentStep();
-                }
-              }
-            }
-          }
-
-          lastPosition = { lat, lon };
-          lastGpsTimestamp = nowTs;
-          document.getElementById("telemStatus").innerText = `Speed: ${currentSpeedKmh} km/h | Lean: ${currentLeanAngle}°`;
-        },
-        (err) => console.warn(err),
-        { enableHighAccuracy: true, maximumAge: 500, timeout: 10000 }
-      );
-    }
-
-    function calculateDistanceMeters(lat1, lon1, lat2, lon2) {
-      const R = 6371e3;
-      const phi1 = lat1 * Math.PI / 180;
-      const phi2 = lat2 * Math.PI / 180;
-      const dPhi = (lat2 - lat1) * Math.PI / 180;
-      const dLambda = (lon2 - lon1) * Math.PI / 180;
-      const a = Math.sin(dPhi / 2) * Math.sin(dPhi / 2) +
-                Math.cos(phi1) * Math.cos(phi2) *
-                Math.sin(dLambda / 2) * Math.sin(dLambda / 2);
-      return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
-    }
-
-    // ============================================================
-    // GYRO LEAN ANGLE TRACKING
-    // ============================================================
-    if (window.DeviceOrientationEvent) {
-      window.addEventListener('deviceorientation', (e) => {
-        let roll = e.gamma || 0;
-        currentLeanAngle = Math.round(roll);
-        if (currentLeanAngle < 0 && Math.abs(currentLeanAngle) > maxLeanLeft) maxLeanLeft = Math.abs(currentLeanAngle);
-        else if (currentLeanAngle > 0 && currentLeanAngle > maxLeanRight) maxLeanRight = currentLeanAngle;
+      bleDevice = await navigator.bluetooth.requestDevice({
+        acceptAllDevices: true,
+        optionalServices: [SERVICE_UUID]
       });
+
+      bleDevice.addEventListener('gattserverdisconnected', () => {
+        updateStatus(false);
+      });
+
+      const server = await bleDevice.gatt.connect();
+      const service = await server.getPrimaryService(SERVICE_UUID);
+      navCharacteristic = await service.getCharacteristic(CHARACTERISTIC_UUID);
+
+      updateStatus(true);
+      sendManualPacket();
+    } catch (err) {
+      console.error(err);
+      alert("BLE Error: " + err.message);
+      updateStatus(false);
     }
+  }
 
-    setInterval(() => {
-      if (!bleCharacteristic) return;
-      const lateralG = (Math.sin(currentLeanAngle * Math.PI / 180)).toFixed(2);
-      sendBlePacket(`GYRO,${currentLeanAngle},${maxLeanLeft},${maxLeanRight},${lateralG}\n`);
-    }, 120);
+  async function sendBleData(payload) {
+    if (!navCharacteristic) return;
+    const encoder = new TextEncoder();
+    try {
+      await navCharacteristic.writeValue(encoder.encode(payload));
+    } catch (err) {
+      console.error("Write error:", err);
+    }
+  }
 
-    // ============================================================
-    // WEATHER TELEMETRY (OPEN-METEO)
-    // ============================================================
-    async function updateWeather() {
-      if (!lastPosition) return;
-      try {
-        const res = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lastPosition.lat}&longitude=${lastPosition.lon}&current=temperature_2m,weather_code&timezone=auto`);
-        const data = await res.json();
-        if (data && data.current) {
-          ambientTempC = Math.round(data.current.temperature_2m);
-          const code = data.current.weather_code;
-          rainAlert = (code >= 51 && code <= 82) ? 1 : 0;
-        }
-      } catch (e) {
-        console.warn("Weather error:", e);
+  async function sendManualPacket() {
+    if (!navCharacteristic) {
+      alert("Connect to the Tripper first.");
+      return;
+    }
+    await sendBleData(buildPayload());
+  }
+
+  // ============================================================
+  // SPOTIFY PKCE AUTHENTICATION & POLLING
+  // ============================================================
+  function generateRandomString(length) {
+    const p = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+    return crypto.getRandomValues(new Uint8Array(length)).reduce((acc, x) => acc + p[x % p.length], "");
+  }
+
+  async function sha256(plain) {
+    return window.crypto.subtle.digest('SHA-256', new TextEncoder().encode(plain));
+  }
+
+  function base64encode(input) {
+    return btoa(String.fromCharCode(...new Uint8Array(input)))
+      .replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
+  }
+
+  async function authorizeSpotify() {
+    const codeVerifier = generateRandomString(64);
+    const hashed = await sha256(codeVerifier);
+    const codeChallenge = base64encode(hashed);
+    localStorage.setItem('spotify_code_verifier', codeVerifier);
+
+    const authUrl = new URL("https://accounts.spotify.com/authorize");
+    authUrl.search = new URLSearchParams({
+      response_type: 'code',
+      client_id: SPOTIFY_CLIENT_ID,
+      scope: SPOTIFY_SCOPES,
+      code_challenge_method: 'S256',
+      code_challenge: codeChallenge,
+      redirect_uri: SPOTIFY_REDIRECT_URI,
+    }).toString();
+
+    window.location.href = authUrl.toString();
+  }
+
+  async function handleSpotifyCallback() {
+    const code = new URLSearchParams(window.location.search).get('code');
+    if (!code) return;
+
+    const codeVerifier = localStorage.getItem('spotify_code_verifier');
+    try {
+      const response = await fetch('https://accounts.spotify.com/api/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          client_id: SPOTIFY_CLIENT_ID,
+          grant_type: 'authorization_code',
+          code: code,
+          redirect_uri: SPOTIFY_REDIRECT_URI,
+          code_verifier: codeVerifier,
+        }),
+      });
+
+      const data = await response.json();
+      if (data.access_token) {
+        localStorage.setItem('spotify_access_token', data.access_token);
+        window.history.replaceState({}, document.title, window.location.pathname);
+        updateSpotifyUI(true);
       }
+    } catch (err) {
+      console.error("Token error:", err);
     }
-    setInterval(updateWeather, 600000);
+  }
 
-    // ============================================================
-    // PACKET DISPATCH LOOP (NAV vs SPD)
-    // ============================================================
-    setInterval(() => {
-      if (!bleCharacteristic) return;
-
-      const now = new Date();
-      const hour = now.getHours();
-      const min = now.getMinutes();
-      const isNight = (hour >= 18 || hour < 6) ? 1 : 0;
-
-      if (routeSteps.length > 0) {
-        const remTripKm = (remainingTripMeters / 1000).toFixed(1);
-        const totalTripKm = (totalTripDistanceMeters / 1000).toFixed(1);
-        const packet = `NAV,${currentTurnCode},${stepDistMeters},${stepDistMeters},${remTripKm},${totalTripKm},${hour},${min},${isNight},${currentSpeedKmh},${speedLimitKmh},${ambientTempC},${rainAlert},${currentRoadName}\n`;
-        sendBlePacket(packet);
-      } else {
-        const packet = `SPD,${currentSpeedKmh},${speedLimitKmh},${hour},${min},${isNight},${ambientTempC},${rainAlert}\n`;
-        sendBlePacket(packet);
-      }
-    }, 1000);
-
-    function finishTripAndSendSummary() {
-      const tripMin = Math.round((Date.now() - tripStartTime) / 60000);
-      const avgSpd = speedSamples > 0 ? Math.round(speedSum / speedSamples) : 0;
-      const totalKm = (totalTripDistanceMeters / 1000).toFixed(1);
-      sendBlePacket(`SUM,${totalKm},${tripMin},${maxSpeedKmh},${avgSpd},${ambientTempC}\n`);
-      routeSteps = [];
-      if (routePolyline) map.removeLayer(routePolyline);
+  function updateSpotifyUI(linked) {
+    const btn = document.getElementById("btnSpotify");
+    if (!btn) return;
+    if (linked) {
+      btn.textContent = "Spotify Linked";
+      btn.classList.add("secondary");
+      btn.disabled = true;
     }
+  }
 
-    // ============================================================
-    // SPOTIFY PKCE & REALTIME POLLING
-    // ============================================================
-    function generateRandomString(length) {
-      const p = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-      return crypto.getRandomValues(new Uint8Array(length)).reduce((acc, x) => acc + p[x % p.length], "");
-    }
+  async function pollSpotify() {
+    const token = localStorage.getItem('spotify_access_token');
+    if (!token) return;
 
-    async function sha256(plain) {
-      return window.crypto.subtle.digest('SHA-256', new TextEncoder().encode(plain));
-    }
+    try {
+      const res = await fetch('https://api.spotify.com/v1/me/player/currently-playing', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
 
-    function base64encode(input) {
-      return btoa(String.fromCharCode(...new Uint8Array(input)))
-        .replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
-    }
-
-    async function authorizeSpotify() {
-      const codeVerifier = generateRandomString(64);
-      const hashed = await sha256(codeVerifier);
-      const codeChallenge = base64encode(hashed);
-      localStorage.setItem('spotify_code_verifier', codeVerifier);
-
-      const authUrl = new URL("https://accounts.spotify.com/authorize");
-      authUrl.search = new URLSearchParams({
-        response_type: 'code',
-        client_id: SPOTIFY_CLIENT_ID,
-        scope: SPOTIFY_SCOPES,
-        code_challenge_method: 'S256',
-        code_challenge: codeChallenge,
-        redirect_uri: SPOTIFY_REDIRECT_URI,
-      }).toString();
-
-      window.location.href = authUrl.toString();
-    }
-
-    async function handleSpotifyCallback() {
-      const code = new URLSearchParams(window.location.search).get('code');
-      if (!code) return;
-
-      const codeVerifier = localStorage.getItem('spotify_code_verifier');
-      try {
-        const response = await fetch('https://accounts.spotify.com/api/token', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-          body: new URLSearchParams({
-            client_id: SPOTIFY_CLIENT_ID,
-            grant_type: 'authorization_code',
-            code: code,
-            redirect_uri: SPOTIFY_REDIRECT_URI,
-            code_verifier: codeVerifier,
-          }),
-        });
-
-        const data = await response.json();
-        if (data.access_token) {
-          localStorage.setItem('spotify_access_token', data.access_token);
-          window.history.replaceState({}, document.title, window.location.pathname);
-          updateSpotifyUI(true);
+      if (res.status === 204) {
+        document.getElementById("spTitle").innerText = "Not Playing";
+        document.getElementById("spArtist").innerText = "Idle";
+        document.getElementById("spProgress").innerText = "--:-- / --:--";
+        if (lastSpotifySig !== "idle" && navCharacteristic) {
+          lastSpotifySig = "idle";
+          sendBleData("SPOT,0,0,0,Not Playing,Spotify,No Album\n");
         }
-      } catch (err) {
-        console.error("Token error:", err);
+        return;
       }
-    }
 
-    function updateSpotifyUI(linked) {
-      const btn = document.getElementById("spotifyBtn");
-      const status = document.getElementById("spotifyStatus");
-      if (linked) {
-        status.innerText = "Linked";
-        status.style.color = "#34c759";
-        btn.innerText = "Spotify Active";
-        btn.className = "btn btn-disabled";
-        btn.disabled = true;
+      if (res.status === 401) {
+        localStorage.removeItem('spotify_access_token');
+        updateSpotifyUI(false);
+        return;
       }
-    }
 
-    async function pollSpotify() {
-      const token = localStorage.getItem('spotify_access_token');
-      if (!token) return;
+      const data = await res.json();
+      if (data && data.item) {
+        const isPlaying = data.is_playing ? 1 : 0;
+        const progressSec = Math.floor((data.progress_ms || 0) / 1000);
+        const durationSec = Math.floor((data.item.duration_ms || 0) / 1000);
 
-      try {
-        const res = await fetch('https://api.spotify.com/v1/me/player/currently-playing', {
-          headers: { 'Authorization': `Bearer ${token}` }
-        });
+        const title = data.item.name.replace(/,/g, ' ').substring(0, 24);
+        const artist = data.item.artists.map(a => a.name).join(' & ').replace(/,/g, ' ').substring(0, 24);
+        const album = (data.item.album ? data.item.album.name : "").replace(/,/g, ' ').substring(0, 24);
 
-        if (res.status === 204) {
-          if (lastSentSpotifySig !== "idle" && bleCharacteristic) {
-            lastSentSpotifySig = "idle";
-            sendBlePacket("SPOT,0,0,0,Not Playing,Spotify,No Album\n");
-          }
-          return;
+        document.getElementById("spTitle").innerText = title;
+        document.getElementById("spArtist").innerText = artist;
+        document.getElementById("spProgress").innerText = 
+          `${Math.floor(progressSec/60)}:${(progressSec%60).toString().padStart(2,'0')} / ${Math.floor(durationSec/60)}:${(durationSec%60).toString().padStart(2,'0')} (${isPlaying ? 'Playing' : 'Paused'})`;
+
+        const sig = `${isPlaying}-${title}-${Math.floor(progressSec / 2)}`;
+        if (lastSpotifySig !== sig && navCharacteristic) {
+          lastSpotifySig = sig;
+          sendBleData(`SPOT,${isPlaying},${progressSec},${durationSec},${title},${artist},${album}\n`);
         }
-
-        if (res.status === 401) {
-          localStorage.removeItem('spotify_access_token');
-          updateSpotifyUI(false);
-          return;
-        }
-
-        const data = await res.json();
-        if (data && data.item) {
-          const isPlaying = data.is_playing ? 1 : 0;
-          const progressSec = Math.floor((data.progress_ms || 0) / 1000);
-          const durationSec = Math.floor((data.item.duration_ms || 0) / 1000);
-
-          const title = data.item.name.replace(/,/g, ' ').substring(0, 24);
-          const artist = data.item.artists.map(a => a.name).join(' & ').replace(/,/g, ' ').substring(0, 24);
-          const album = (data.item.album ? data.item.album.name : "").replace(/,/g, ' ').substring(0, 24);
-
-          const sig = `${isPlaying}-${title}-${Math.floor(progressSec / 2)}`;
-          if (lastSentSpotifySig !== sig && bleCharacteristic) {
-            lastSentSpotifySig = sig;
-            sendBlePacket(`SPOT,${isPlaying},${progressSec},${durationSec},${title},${artist},${album}\n`);
-          }
-        }
-      } catch (err) {
-        console.error("Spotify poll error:", err);
       }
+    } catch (err) {
+      console.error("Spotify Poll Error:", err);
     }
+  }
 
-    window.addEventListener('DOMContentLoaded', () => {
-      handleSpotifyCallback();
-      if (localStorage.getItem('spotify_access_token')) updateSpotifyUI(true);
-      setInterval(pollSpotify, 2000);
-    });
-  </script>
+  // Startup checks
+  window.addEventListener('DOMContentLoaded', () => {
+    handleSpotifyCallback();
+    if (localStorage.getItem('spotify_access_token')) updateSpotifyUI(true);
+    setInterval(pollSpotify, 1500);
+  });
+
+  updatePreview();
+</script>
+
 </body>
 </html>
