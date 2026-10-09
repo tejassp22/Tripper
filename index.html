@@ -1,891 +1,539 @@
-#include <Arduino_GFX_Library.h>
-#include <BLEDevice.h>
-#include <BLEServer.h>
-#include <BLEClient.h>
-#include <BLEUtils.h>
-#include <BLE2902.h>
-#include <BLESecurity.h>
-#include <Preferences.h>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>Hunter 350 Tripper Dashboard</title>
 
-// ============================================================
-// ESP32-S3-ZERO -> ST7789 Pinout Configuration
-// ============================================================
-#define TFT_SCL   4
-#define TFT_SDA   6
-#define TFT_RST   8
-#define TFT_DC    9
-#define TFT_BLK  10
+  <!-- Leaflet CSS & JS (Free OSM - No Mapbox Token Required) -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
-#define PWM_FREQ        5000
-#define PWM_RESOLUTION  8
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    body { background: #0f1115; color: #fff; display: flex; flex-direction: column; align-items: center; min-height: 100vh; padding: 14px; }
+    h1 { color: #d80000; font-size: 1.3rem; letter-spacing: 1px; margin-bottom: 12px; text-transform: uppercase; }
+    .card { background: #181b22; width: 100%; max-width: 480px; border-radius: 12px; padding: 14px; margin-bottom: 12px; border: 1px solid #272c38; }
+    .btn { display: block; width: 100%; padding: 12px; font-size: 0.95rem; font-weight: 600; border-radius: 8px; border: none; cursor: pointer; margin-bottom: 8px; text-align: center; }
+    .btn-ble { background: #007aff; color: white; }
+    .btn-spotify { background: #1db954; color: white; }
+    .btn-summary { background: #ff9500; color: white; }
+    .btn-disabled { background: #262b36; color: #6e7687; cursor: not-allowed; border: 1px solid #363d4e; }
+    .status-row { display: flex; justify-content: space-between; font-size: 0.85rem; padding: 5px 0; border-bottom: 1px solid #212631; }
+    .status-val { font-weight: 600; color: #00e5ff; }
+    #map { width: 100%; height: 260px; border-radius: 10px; margin-top: 8px; border: 1px solid #2e3545; z-index: 1; }
+    .search-box { display: flex; gap: 6px; margin-top: 6px; }
+    .search-box input { flex: 1; padding: 10px; border-radius: 6px; border: 1px solid #30363d; background: #0d1117; color: #fff; font-size: 0.9rem; }
+    .search-results { background: #161b22; border: 1px solid #30363d; border-radius: 6px; max-height: 120px; overflow-y: auto; margin-top: 4px; display: none; }
+    .search-item { padding: 8px; font-size: 0.85rem; border-bottom: 1px solid #21262d; cursor: pointer; }
+    .search-item:hover { background: #21262d; }
+    .slider-container { display: flex; align-items: center; justify-content: space-between; margin-top: 8px; font-size: 0.85rem; }
+    .slider { width: 65%; accent-color: #d80000; }
+    .spotify-preview { background: #11141a; border-radius: 8px; padding: 10px; margin-top: 8px; border-left: 3px solid #1db954; font-size: 0.85rem; }
+  </style>
+</head>
+<body>
 
-// Web BLE Tripper Service
-#define TRIPPER_SERVICE_UUID        "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
-#define TRIPPER_CHAR_UUID           "beb5483e-36e1-4688-b7f5-ea07361b26a8"
+  <h1>Hunter 350 Smart Dash</h1>
 
-// Color Palette
-#define COLOR_BLACK         0x0000
-#define COLOR_WHITE         0xFFFF
-#define COLOR_RE_RED        0xD800 
-#define COLOR_CALL_GREEN    0x07E0
-#define COLOR_MSG_CYAN      0x067F
-#define COLOR_INSTA_PINK    0xF814
-#define COLOR_AMBER         0xFDA0 
-#define COLOR_DARK_GRAY     0x2104
-#define COLOR_LIGHT_GRAY    0xBDF7
-#define COLOR_MID_GRAY      0x7BEF
-#define COLOR_RAIN_BLUE     0x05BF
-#define COLOR_LEAN_CYAN     0x07FF
-#define COLOR_SPOTIFY_GREEN 0x1DB9
+  <!-- Control & Status Card -->
+  <div class="card">
+    <button id="bleBtn" class="btn btn-ble" onclick="connectBLE()">Connect Hunter Tripper</button>
+    <button id="spotifyBtn" class="btn btn-spotify" onclick="authorizeSpotify()">Link Spotify Account</button>
+    
+    <div class="status-row">
+      <span>Tripper BLE:</span>
+      <span id="bleStatus" class="status-val" style="color: #ff3b30;">Disconnected</span>
+    </div>
+    <div class="status-row">
+      <span>Spotify Sync:</span>
+      <span id="spotifyStatus" class="status-val" style="color: #ff3b30;">Unlinked</span>
+    </div>
+    <div class="status-row">
+      <span>Live Telemetry:</span>
+      <span id="telemStatus" class="status-val">Speed: 0 km/h | Lean: 0°</span>
+    </div>
+    <div class="status-row">
+      <span>Distance Covered:</span>
+      <span id="distCoveredStatus" class="status-val">0.0 km</span>
+    </div>
 
-Arduino_DataBus *bus = new Arduino_ESP32SPI(TFT_DC, GFX_NOT_DEFINED, TFT_SCL, TFT_SDA);
-Arduino_GFX *output_display = new Arduino_ST7789(bus, TFT_RST, 0, true, 240, 240);
-Arduino_Canvas *canvas = new Arduino_Canvas(240, 240, output_display);
+    <div class="slider-container">
+      <span>Display Brightness:</span>
+      <input type="range" min="10" max="100" value="100" class="slider" id="briSlider" oninput="sendBrightness(this.value)">
+    </div>
 
-Preferences prefs;
+    <div class="spotify-preview">
+      <div id="spTitle" style="font-weight: bold; color: #fff;">Not Playing</div>
+      <div id="spArtist" style="color: #8892b0; margin-top: 2px;">Spotify Idle</div>
+      <div id="spProgress" style="color: #00e5ff; font-size: 0.75rem; margin-top: 4px;">--:-- / --:--</div>
+    </div>
+  </div>
 
-// System States
-enum SystemState {
-  STATE_BOOT_WELCOME,
-  STATE_BOOT_HELMET,
-  STATE_IDLE_SPEEDO,
-  STATE_DEDICATED_ODO,
-  STATE_NAV_ACTIVE,
-  STATE_SPOTIFY_MODE,
-  STATE_MUSIC_POPUP,
-  STATE_INCOMING_CALL,
-  STATE_MESSAGE_POPUP,
-  STATE_TRIP_SUMMARY
-};
+  <!-- Map & Navigation Card -->
+  <div class="card">
+    <div style="font-weight: 600; font-size: 0.85rem; color: #8892b0;">DESTINATION & ROUTE</div>
+    <div class="search-box">
+      <input type="text" id="destInput" placeholder="Search destination (e.g. Bandra, Thane)..." oninput="searchLocation(this.value)">
+    </div>
+    <div id="searchResults" class="search-results"></div>
 
-enum TurnType { TURN_STRAIGHT = 0, TURN_LEFT = 1, TURN_RIGHT = 2, TURN_UTURN = 3, TURN_ROUNDABOUT = 4 };
+    <div id="map"></div>
+    <button class="btn btn-summary" style="margin-top: 10px;" onclick="finishTripAndSendSummary()">End Trip & View Summary</button>
+  </div>
 
-SystemState currentState = STATE_BOOT_WELCOME;
-unsigned long stateTimer = 0;
-unsigned long callAlertTimer = 0;
-unsigned long msgAlertTimer = 0;
-unsigned long lastNavPacketTime = 0;
-unsigned long screenRotateTimer = 0;
-unsigned long lastNavRenderTime = 0;
-unsigned long lastSpotifyRender = 0;
-unsigned long musicPopupTimer = 0;
+  <script>
+    const SPOTIFY_CLIENT_ID = "853f624535ad4ff3bf665a26c9a7dbbe";
+    const SPOTIFY_REDIRECT_URI = window.location.origin + window.location.pathname;
+    const SPOTIFY_SCOPES = "user-read-currently-playing user-read-playback-state";
 
-// Persistent Odometer
-float totalBikeOdoKm = 0.0f;
-float tripOdoKm      = 0.0f;
-unsigned long lastOdoSaveTime = 0;
+    const TRIPPER_SERVICE_UUID = "4fafc201-1fb5-459e-8fcc-c5c9c331914b";
+    const TRIPPER_CHAR_UUID    = "beb5483e-36e1-4688-b7f5-ea07361b26a8";
 
-// Telemetry & Dynamic State
-bool isNightTheme = false;
-bool bleConnected = false;
-bool routeActive = false;
+    let bleDevice = null;
+    let bleCharacteristic = null;
 
-TurnType currentTurnType = TURN_STRAIGHT;
-int currentDistance = 0;
-int stepInitialDistance = 0;
-float remainingTripDist = 0.0f;
-float totalTripDist = 0.0f;
-char currentRoadName[32] = "Ride Safe";
-int liveSpeedKmh = 0;
-int speedLimitKmh = 60;
-int currentHour = 12;
-int currentMinute = 0;
+    let currentSpeedKmh = 0;
+    let maxSpeedKmh = 0;
+    let speedSum = 0;
+    let speedSamples = 0;
+    let speedLimitKmh = 60;
+    let tripStartTime = Date.now();
 
-// Gyroscope Telemetry
-int currentLeanAngle = 0;
-int maxLeanLeft = 0;
-int maxLeanRight = 0;
-float lateralG = 0.0f;
+    let ambientTempC = 28;
+    let rainAlert = 0;
 
-int ambientTemp = 28;
-bool rainAlert = false;
-int topSpeedKmh = 0;
-int avgSpeedKmh = 0;
-int tripMinutes = 0;
+    let currentLeanAngle = 0;
+    let maxLeanLeft = 0;
+    let maxLeanRight = 0;
 
-// Spotify State (Clean UI - Soundwave Bars, No Eyes)
-bool spotifyAvailable = false;
-bool spotifyPlaying = false;
-String spotifyTitle = "";
-String spotifyArtist = "";
-String spotifyAlbum = "";
-long spotifyProgressMs = 0;
-long spotifyDurationMs = 0;
+    let totalTripDistanceMeters = 0;
+    let distanceCoveredMeters = 0;
+    let lastPosition = null;
+    let lastGpsTimestamp = null;
 
-void setDisplayBrightness(int percent) {
-  if (percent < 5) percent = 5;
-  if (percent > 100) percent = 100;
-  int duty = map(percent, 0, 100, 0, 255);
-  ledcWrite(TFT_BLK, duty);
-}
+    let routeSteps = [];
+    let currentStepIndex = 0;
+    let remainingTripMeters = 0;
+    let currentRoadName = "Ride Safe";
+    let currentTurnCode = 0; 
+    let stepDistMeters = 0;
 
-uint16_t getBgColor()   { return isNightTheme ? COLOR_BLACK : COLOR_WHITE; }
-uint16_t getFgColor()   { return isNightTheme ? COLOR_WHITE : COLOR_BLACK; }
-uint16_t getAccent()    { return isNightTheme ? COLOR_AMBER : COLOR_RE_RED; }
-uint16_t getSubColor()  { return isNightTheme ? COLOR_LIGHT_GRAY : COLOR_MID_GRAY; }
+    let lastSentSpotifySig = "";
 
-int getSafeCircleWidth(int y) {
-  int dy = abs(y - 120);
-  if (dy >= 115) return 20;
-  return (int)(2.0f * sqrt(115.0f * 115.0f - (float)(dy * dy))) - 10;
-}
+    // ============================================================
+    // BLE CONNECTION
+    // ============================================================
+    async function connectBLE() {
+      try {
+        document.getElementById("bleStatus").innerText = "Searching...";
+        bleDevice = await navigator.bluetooth.requestDevice({
+          filters: [{ name: "Tripper" }],
+          optionalServices: [TRIPPER_SERVICE_UUID]
+        });
 
-void drawSymmetricCenteredText(const char *text, int y, int preferredSize, uint16_t fg) {
-  int maxWidth = getSafeCircleWidth(y);
-  int size = preferredSize;
-  
-  canvas->setTextSize(size);
-  int16_t x1, y1;
-  uint16_t w, h;
-  canvas->getTextBounds(text, 0, y, &x1, &y1, &w, &h);
+        bleDevice.addEventListener('gattserverdisconnected', onDisconnected);
+        const server = await bleDevice.gatt.connect();
+        const service = await server.getPrimaryService(TRIPPER_SERVICE_UUID);
+        bleCharacteristic = await service.getCharacteristic(TRIPPER_CHAR_UUID);
 
-  if (w > maxWidth && size > 1) {
-    size = 1;
-    canvas->setTextSize(size);
-    canvas->getTextBounds(text, 0, y, &x1, &y1, &w, &h);
-  }
-
-  String displayStr = String(text);
-  if (w > maxWidth) {
-    while (displayStr.length() > 3 && w > maxWidth) {
-      displayStr.remove(displayStr.length() - 1);
-      String temp = displayStr + "..";
-      canvas->getTextBounds(temp.c_str(), 0, y, &x1, &y1, &w, &h);
-    }
-    displayStr += "..";
-  }
-
-  int x = (240 - w) / 2;
-  if (x < 10) x = 10;
-
-  canvas->setTextColor(fg);
-  canvas->setCursor(x, y);
-  canvas->print(displayStr);
-}
-
-void drawTripperFrame(uint16_t ringColor) {
-  canvas->drawCircle(120, 120, 119, ringColor);
-  canvas->drawCircle(120, 120, 118, ringColor);
-  canvas->drawCircle(120, 120, 114, getSubColor());
-}
-
-String shortenText(String text, int maxChars) {
-  if (text.length() <= maxChars) return text;
-  if (maxChars <= 3) return text.substring(0, maxChars);
-  return text.substring(0, maxChars - 3) + "...";
-}
-
-String formatMs(long ms) {
-  if (ms < 0) ms = 0;
-  long sec = ms / 1000;
-  int minutes = sec / 60;
-  int seconds = sec % 60;
-  char buf[12];
-  snprintf(buf, sizeof(buf), "%d:%02d", minutes, seconds);
-  return String(buf);
-}
-
-// ------------------------------------------------------------
-// Screen: Clean Spotify UI (Soundwave Equalizer, No EMO Eyes)
-// ------------------------------------------------------------
-void drawSpotifyScreen() {
-  canvas->fillScreen(COLOR_BLACK);
-  drawTripperFrame(COLOR_SPOTIFY_GREEN);
-
-  char topHeader[24];
-  snprintf(topHeader, sizeof(topHeader), "%02d:%02d  |  SPOTIFY", currentHour, currentMinute);
-  drawSymmetricCenteredText(topHeader, 24, 1, COLOR_SPOTIFY_GREEN);
-
-  // Equalizer Soundwave Animation
-  static uint8_t animStep = 0;
-  animStep++;
-  int startX = 64;
-  int baseY = 65;
-  for (int i = 0; i < 9; i++) {
-    int barHeight;
-    if (spotifyPlaying) {
-      barHeight = 6 + (int)(18.0f * (0.5f + 0.5f * sin((animStep * 0.45f) + (i * 0.8f))));
-    } else {
-      barHeight = 4;
-    }
-    uint16_t barColor = (i == 4) ? COLOR_WHITE : COLOR_SPOTIFY_GREEN;
-    canvas->fillRoundRect(startX + (i * 12), baseY - (barHeight / 2), 6, barHeight, 2, barColor);
-  }
-
-  // Track Title
-  drawSymmetricCenteredText(shortenText(spotifyTitle, 16).c_str(), 96, 2, COLOR_WHITE);
-
-  // Artist Name
-  drawSymmetricCenteredText(shortenText(spotifyArtist, 22).c_str(), 124, 1, COLOR_LEAN_CYAN);
-
-  // Album Name
-  if (spotifyAlbum.length() > 0 && spotifyAlbum != "No Album") {
-    drawSymmetricCenteredText(shortenText(spotifyAlbum, 24).c_str(), 140, 1, COLOR_MID_GRAY);
-  }
-
-  // Progress Bar
-  int barTotalWidth = 150;
-  int barX = (240 - barTotalWidth) / 2;
-  int barY = 160;
-
-  canvas->fillRoundRect(barX, barY, barTotalWidth, 4, 2, COLOR_DARK_GRAY);
-  if (spotifyDurationMs > 0 && spotifyProgressMs <= spotifyDurationMs) {
-    int filledWidth = (int)(((float)spotifyProgressMs / (float)spotifyDurationMs) * (float)barTotalWidth);
-    if (filledWidth > barTotalWidth) filledWidth = barTotalWidth;
-    if (filledWidth < 2) filledWidth = 2;
-    canvas->fillRoundRect(barX, barY, filledWidth, 4, 2, COLOR_SPOTIFY_GREEN);
-  }
-
-  // Time Counters
-  char timeBuf[24];
-  snprintf(timeBuf, sizeof(timeBuf), "%s / %s", formatMs(spotifyProgressMs).c_str(), formatMs(spotifyDurationMs).c_str());
-  drawSymmetricCenteredText(timeBuf, 172, 1, COLOR_LIGHT_GRAY);
-
-  // Bottom Status (Speed + Temp)
-  char btmBuf[32];
-  snprintf(btmBuf, sizeof(btmBuf), "%d km/h  |  %dC", liveSpeedKmh, ambientTemp);
-  drawSymmetricCenteredText(btmBuf, 194, 1, COLOR_RE_RED);
-
-  canvas->flush();
-}
-
-// ------------------------------------------------------------
-// Screen: Brief Music Overlay (When Navigation is Active)
-// ------------------------------------------------------------
-void renderMusicPopupScreen() {
-  canvas->fillScreen(COLOR_BLACK);
-  drawTripperFrame(COLOR_SPOTIFY_GREEN);
-
-  canvas->fillCircle(120, 52, 16, COLOR_SPOTIFY_GREEN);
-  canvas->drawCircle(120, 56, 10, COLOR_BLACK);
-  canvas->drawCircle(120, 60, 6, COLOR_BLACK);
-
-  drawSymmetricCenteredText(spotifyPlaying ? "NOW PLAYING" : "PAUSED", 78, 1, COLOR_SPOTIFY_GREEN);
-  drawSymmetricCenteredText(shortenText(spotifyTitle, 16).c_str(), 110, 2, COLOR_WHITE);
-  drawSymmetricCenteredText(shortenText(spotifyArtist, 22).c_str(), 142, 1, COLOR_LIGHT_GRAY);
-  drawSymmetricCenteredText("SPOTIFY AUDIO", 178, 1, COLOR_MID_GRAY);
-
-  canvas->flush();
-}
-
-void renderWelcomeScreen() {
-  canvas->fillScreen(getBgColor());
-  drawTripperFrame(getAccent());
-  drawSymmetricCenteredText("ROYAL ENFIELD", 50, 1, getSubColor());
-  drawSymmetricCenteredText("Tejas's", 90, 3, getFgColor());
-  drawSymmetricCenteredText("HUNTER", 125, 3, getAccent());
-  drawSymmetricCenteredText("SMART DASH v8", 170, 1, getSubColor());
-  canvas->flush();
-}
-
-void drawHelmetIcon(int cx, int cy, uint16_t color) {
-  canvas->fillCircle(cx, cy - 2, 28, color);
-  canvas->fillRect(cx - 28, cy + 8, 56, 20, getBgColor());
-  canvas->fillRoundRect(cx + 2, cy - 10, 24, 14, 4, getBgColor());
-  canvas->fillRoundRect(cx + 4, cy - 8, 20, 10, 3, getAccent());
-  canvas->fillRoundRect(cx - 24, cy + 4, 48, 14, 5, color);
-  canvas->drawFastHLine(cx - 20, cy + 18, 40, color);
-  canvas->drawFastHLine(cx - 16, cy + 20, 32, getAccent());
-}
-
-void renderHelmetScreen() {
-  canvas->fillScreen(getBgColor());
-  drawTripperFrame(getAccent());
-  drawHelmetIcon(120, 95, getFgColor());
-  drawSymmetricCenteredText("WEAR HELMET", 145, 2, getFgColor());
-  drawSymmetricCenteredText("RIDE SAFE", 175, 1, getAccent());
-  canvas->flush();
-}
-
-void renderIdleSpeedoScreen() {
-  canvas->fillScreen(getBgColor());
-
-  bool isOverSpeed = (liveSpeedKmh >= speedLimitKmh && speedLimitKmh > 0);
-  static bool strobe = false;
-  strobe = !strobe;
-  uint16_t frameColor = isOverSpeed ? (strobe ? COLOR_RE_RED : COLOR_WHITE) : getAccent();
-  drawTripperFrame(frameColor);
-
-  char topBarBuf[24];
-  snprintf(topBarBuf, sizeof(topBarBuf), "%02d:%02d  |  %dC", currentHour, currentMinute, ambientTemp);
-  drawSymmetricCenteredText(topBarBuf, 28, 2, getSubColor());
-
-  char speedBuf[10];
-  snprintf(speedBuf, sizeof(speedBuf), "%d", liveSpeedKmh);
-  uint16_t speedColor = isOverSpeed ? COLOR_RE_RED : getFgColor();
-  drawSymmetricCenteredText(speedBuf, 75, 6, speedColor);
-  drawSymmetricCenteredText("km/h", 132, 2, isOverSpeed ? COLOR_RE_RED : getAccent());
-
-  if (isOverSpeed) {
-    drawSymmetricCenteredText("! SLOW DOWN !", 170, 2, COLOR_RE_RED);
-    char limBuf[24];
-    snprintf(limBuf, sizeof(limBuf), "Limit: %d km/h", speedLimitKmh);
-    drawSymmetricCenteredText(limBuf, 192, 1, COLOR_RE_RED);
-  } else if (rainAlert) {
-    drawSymmetricCenteredText("RAIN AHEAD", 170, 2, COLOR_RAIN_BLUE);
-    drawSymmetricCenteredText("Wet Road Advisory", 192, 1, getSubColor());
-  } else if (bleConnected) {
-    if (abs(currentLeanAngle) >= 4) {
-      char leanStr[24];
-      snprintf(leanStr, sizeof(leanStr), "LEAN %s %d*", currentLeanAngle < 0 ? "L" : "R", abs(currentLeanAngle));
-      drawSymmetricCenteredText(leanStr, 172, 1, COLOR_LEAN_CYAN);
-    } else {
-      char peakStr[28];
-      snprintf(peakStr, sizeof(peakStr), "MAX L:%d* | R:%d*", maxLeanLeft, maxLeanRight);
-      drawSymmetricCenteredText(peakStr, 172, 1, COLOR_MID_GRAY);
-    }
-    drawSymmetricCenteredText("Hunter 350 Connected", 190, 1, getSubColor());
-  } else {
-    drawSymmetricCenteredText("PAIR IN IPHONE SETTINGS", 172, 1, getAccent());
-    drawSymmetricCenteredText("Select 'Tripper'", 188, 1, getSubColor());
-  }
-
-  canvas->flush();
-}
-
-void renderDedicatedOdoScreen() {
-  canvas->fillScreen(getBgColor());
-  drawTripperFrame(getAccent());
-
-  drawSymmetricCenteredText("ODOMETER", 26, 2, getAccent());
-  drawSymmetricCenteredText("TRIP A", 50, 1, getSubColor());
-
-  char tripBuf[16];
-  snprintf(tripBuf, sizeof(tripBuf), "%.1f km", tripOdoKm);
-  drawSymmetricCenteredText(tripBuf, 70, 4, getFgColor());
-
-  canvas->drawFastHLine(45, 122, 150, getSubColor());
-
-  drawSymmetricCenteredText("TOTAL ODO", 134, 1, getSubColor());
-  char odoBuf[16];
-  snprintf(odoBuf, sizeof(odoBuf), "%d km", (int)totalBikeOdoKm);
-  drawSymmetricCenteredText(odoBuf, 150, 3, getFgColor());
-
-  char botBuf[32];
-  snprintf(botBuf, sizeof(botBuf), "Avg: %d km/h | %dC", avgSpeedKmh, ambientTemp);
-  drawSymmetricCenteredText(botBuf, 186, 1, getSubColor());
-
-  canvas->flush();
-}
-
-void drawPrimaryArrow() {
-  uint16_t baseColor = getFgColor();
-  uint16_t fillColor = getAccent();
-
-  float progress = 0.0f;
-  if (stepInitialDistance > 0) {
-    progress = (float)(stepInitialDistance - currentDistance) / (float)stepInitialDistance;
-  }
-  if (progress < 0.0f) progress = 0.0f;
-  if (progress > 1.0f) progress = 1.0f;
-
-  switch (currentTurnType) {
-    case TURN_STRAIGHT: {
-      canvas->fillRect(113, 90, 14, 45, baseColor);
-      canvas->fillTriangle(120, 65, 92, 95, 148, 95, baseColor);
-
-      if (progress <= 0.6f) {
-        int fillH = (int)(45 * (progress / 0.6f));
-        canvas->fillRect(113, 135 - fillH, 14, fillH, fillColor);
-      } else {
-        canvas->fillRect(113, 90, 14, 45, fillColor);
-        if (progress > 0.85f) canvas->fillTriangle(120, 65, 92, 95, 148, 95, fillColor);
+        document.getElementById("bleStatus").innerText = "Connected";
+        document.getElementById("bleStatus").style.color = "#34c759";
+        document.getElementById("bleBtn").innerText = "Tripper Connected";
+        document.getElementById("bleBtn").className = "btn btn-disabled";
+        document.getElementById("bleBtn").disabled = true;
+      } catch (err) {
+        console.error("BLE Error:", err);
+        document.getElementById("bleStatus").innerText = "Failed";
+        document.getElementById("bleStatus").style.color = "#ff3b30";
       }
-      break;
     }
-    case TURN_LEFT: {
-      canvas->fillRect(113, 85, 14, 45, baseColor);
-      canvas->fillRect(75, 85, 45, 14, baseColor);
-      canvas->fillTriangle(52, 92, 78, 68, 78, 116, baseColor);
 
-      if (progress <= 0.5f) {
-        int fillH = (int)(45 * (progress / 0.5f));
-        canvas->fillRect(113, 130 - fillH, 14, fillH, fillColor);
-      } else {
-        canvas->fillRect(113, 85, 14, 45, fillColor);
-        int fillW = (int)(45 * ((progress - 0.5f) / 0.5f));
-        canvas->fillRect(120 - fillW, 85, fillW, 14, fillColor);
-        if (progress > 0.85f) canvas->fillTriangle(52, 92, 78, 68, 78, 116, fillColor);
-      }
-      break;
+    function onDisconnected() {
+      document.getElementById("bleStatus").innerText = "Disconnected";
+      document.getElementById("bleStatus").style.color = "#ff3b30";
+      document.getElementById("bleBtn").innerText = "Connect Hunter Tripper";
+      document.getElementById("bleBtn").className = "btn btn-ble";
+      document.getElementById("bleBtn").disabled = false;
+      bleCharacteristic = null;
     }
-    case TURN_RIGHT: {
-      canvas->fillRect(113, 85, 14, 45, baseColor);
-      canvas->fillRect(120, 85, 45, 14, baseColor);
-      canvas->fillTriangle(188, 92, 162, 68, 162, 116, baseColor);
 
-      if (progress <= 0.5f) {
-        int fillH = (int)(45 * (progress / 0.5f));
-        canvas->fillRect(113, 130 - fillH, 14, fillH, fillColor);
-      } else {
-        canvas->fillRect(113, 85, 14, 45, fillColor);
-        int fillW = (int)(45 * ((progress - 0.5f) / 0.5f));
-        canvas->fillRect(120, 85, fillW, 14, fillColor);
-        if (progress > 0.85f) canvas->fillTriangle(188, 92, 162, 68, 162, 116, fillColor);
+    async function sendBlePacket(packetStr) {
+      if (!bleCharacteristic) return;
+      try {
+        const encoder = new TextEncoder();
+        await bleCharacteristic.writeValue(encoder.encode(packetStr));
+      } catch (e) {
+        console.error("BLE Send Error:", e);
       }
-      break;
     }
-    case TURN_UTURN: {
-      canvas->fillRect(138, 90, 12, 40, baseColor);
-      canvas->fillRect(92, 78, 52, 12, baseColor);
-      canvas->fillRect(88, 90, 12, 40, baseColor);
-      canvas->fillTriangle(82, 128, 102, 108, 102, 148, baseColor);
 
-      if (progress <= 0.35f) {
-        int fillH = (int)(40 * (progress / 0.35f));
-        canvas->fillRect(138, 130 - fillH, 12, fillH, fillColor);
-      } else if (progress <= 0.7f) {
-        canvas->fillRect(138, 90, 12, 40, fillColor);
-        int fillW = (int)(52 * ((progress - 0.35f) / 0.35f));
-        canvas->fillRect(144 - fillW, 78, fillW, 12, fillColor);
-      } else {
-        canvas->fillRect(138, 90, 12, 40, fillColor);
-        canvas->fillRect(92, 78, 52, 12, fillColor);
-        int fillH = (int)(40 * ((progress - 0.7f) / 0.3f));
-        canvas->fillRect(88, 90, 12, fillH, fillColor);
-        if (progress > 0.9f) canvas->fillTriangle(82, 128, 102, 108, 102, 148, fillColor);
-      }
-      break;
+    function sendBrightness(val) {
+      sendBlePacket(`BRI,${val}\n`);
     }
-    case TURN_ROUNDABOUT: {
-      canvas->drawCircle(120, 102, 30, baseColor);
-      canvas->drawCircle(120, 102, 29, baseColor);
-      canvas->fillCircle(120, 102, 16, getBgColor());
 
-      if (progress > 0.5f) {
-        canvas->drawCircle(120, 102, 30, fillColor);
-        canvas->drawCircle(120, 102, 29, fillColor);
+    // ============================================================
+    // LEAFLET MAP & OSRM ROUTING
+    // ============================================================
+    const map = L.map('map').setView([19.0760, 72.8777], 13);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: '© OpenStreetMap'
+    }).addTo(map);
+
+    let userMarker = null;
+    let routePolyline = null;
+
+    async function searchLocation(query) {
+      if (query.length < 3) {
+        document.getElementById("searchResults").style.display = "none";
+        return;
       }
-      if (progress > 0.85f) {
-        canvas->fillTriangle(120, 58, 104, 78, 136, 78, fillColor);
-      } else {
-        canvas->fillTriangle(120, 58, 104, 78, 136, 78, baseColor);
-      }
-      break;
-    }
-  }
-}
-
-void renderPrimaryNavScreen() {
-  canvas->fillScreen(getBgColor());
-
-  bool isOverSpeed = (liveSpeedKmh >= speedLimitKmh && speedLimitKmh > 0);
-  static bool strobe = false;
-  strobe = !strobe;
-  uint16_t frameColor = isOverSpeed ? (strobe ? COLOR_RE_RED : COLOR_WHITE) : getAccent();
-  drawTripperFrame(frameColor);
-
-  char distText[16];
-  if (currentDistance >= 1000) {
-    snprintf(distText, sizeof(distText), "%.1f km", currentDistance / 1000.0f);
-  } else {
-    snprintf(distText, sizeof(distText), "%d m", currentDistance);
-  }
-  drawSymmetricCenteredText(distText, 24, 3, getFgColor());
-
-  drawPrimaryArrow();
-
-  if (isOverSpeed) {
-    drawSymmetricCenteredText("! OVERSPEED !", 144, 1, COLOR_RE_RED);
-  } else if (rainAlert) {
-    drawSymmetricCenteredText("RAIN ALERT", 144, 1, COLOR_RAIN_BLUE);
-  } else {
-    char subBadge[24];
-    snprintf(subBadge, sizeof(subBadge), "%d km/h  |  %dC", liveSpeedKmh, ambientTemp);
-    drawSymmetricCenteredText(subBadge, 144, 1, getSubColor());
-  }
-
-  drawSymmetricCenteredText(currentRoadName, 168, 2, getAccent());
-
-  if (abs(currentLeanAngle) >= 4) {
-    char leanLive[24];
-    snprintf(leanLive, sizeof(leanLive), "LEAN %s %d*", currentLeanAngle < 0 ? "L" : "R", abs(currentLeanAngle));
-    uint16_t leanColor = abs(currentLeanAngle) > 35 ? COLOR_RE_RED : COLOR_LEAN_CYAN;
-    drawSymmetricCenteredText(leanLive, 195, 1, leanColor);
-  } else {
-    char peakStats[28];
-    snprintf(peakStats, sizeof(peakStats), "MAX L:%d* | R:%d*", maxLeanLeft, maxLeanRight);
-    drawSymmetricCenteredText(peakStats, 195, 1, getSubColor());
-  }
-
-  canvas->flush();
-}
-
-void renderTripSummaryScreen() {
-  canvas->fillScreen(getBgColor());
-  drawTripperFrame(getAccent());
-
-  drawSymmetricCenteredText("RIDE SUMMARY", 26, 2, getAccent());
-
-  char distBuf[24];
-  snprintf(distBuf, sizeof(distBuf), "%.1f km", totalTripDist);
-  drawSymmetricCenteredText(distBuf, 56, 3, getFgColor());
-
-  char timeBuf[24];
-  snprintf(timeBuf, sizeof(timeBuf), "Duration: %d min", tripMinutes);
-  drawSymmetricCenteredText(timeBuf, 96, 1, getSubColor());
-
-  canvas->drawFastHLine(45, 116, 150, getSubColor());
-
-  char speedMetricBuf[32];
-  snprintf(speedMetricBuf, sizeof(speedMetricBuf), "Top: %d  |  Avg: %d km/h", topSpeedKmh, avgSpeedKmh);
-  drawSymmetricCenteredText(speedMetricBuf, 132, 1, getFgColor());
-
-  char leanStatsBuf[32];
-  snprintf(leanStatsBuf, sizeof(leanStatsBuf), "Max Lean L: %d* | R: %d*", maxLeanLeft, maxLeanRight);
-  drawSymmetricCenteredText(leanStatsBuf, 155, 1, COLOR_LEAN_CYAN);
-
-  drawSymmetricCenteredText("TEJAS'S HUNTER 350", 182, 1, getAccent());
-  canvas->flush();
-}
-
-// ============================================================
-// Web-BLE Parser (NAV, SPD, SUM, ODO, RST, BRI, GYRO, SPOT)
-// ============================================================
-void parseNavPacket(String input) {
-  input.trim();
-
-  // SPOT,<playing>,<progressSec>,<durationSec>,<title>,<artist>,<album>
-  if (input.startsWith("SPOT,")) {
-    int c1 = input.indexOf(',', 5);
-    int c2 = (c1 > 0) ? input.indexOf(',', c1 + 1) : -1;
-    int c3 = (c2 > 0) ? input.indexOf(',', c2 + 1) : -1;
-    int c4 = (c3 > 0) ? input.indexOf(',', c3 + 1) : -1;
-    int c5 = (c4 > 0) ? input.indexOf(',', c4 + 1) : -1;
-
-    if (c1 > 0) {
-      spotifyPlaying = (input.substring(5, c1).toInt() == 1);
-      spotifyAvailable = true;
-
-      if (c4 > 0) {
-        spotifyProgressMs = input.substring(c1 + 1, c2).toInt() * 1000L;
-        spotifyDurationMs = input.substring(c2 + 1, c3).toInt() * 1000L;
-        spotifyTitle      = input.substring(c3 + 1, c4);
-        spotifyArtist     = (c5 > 0) ? input.substring(c4 + 1, c5) : input.substring(c4 + 1);
-        spotifyAlbum      = (c5 > 0) ? input.substring(c5 + 1) : "";
-      } else if (c2 > 0) {
-        spotifyProgressMs = 0;
-        spotifyDurationMs = 0;
-        spotifyTitle      = input.substring(c1 + 1, c2);
-        spotifyArtist     = input.substring(c2 + 1);
-        spotifyAlbum      = "";
-      }
-
-      if (routeActive) {
-        currentState = STATE_MUSIC_POPUP;
-        musicPopupTimer = millis();
-        renderMusicPopupScreen();
-      } else {
-        if (spotifyPlaying && spotifyTitle != "Not Playing") {
-          currentState = STATE_SPOTIFY_MODE;
-          drawSpotifyScreen();
-        } else {
-          currentState = STATE_IDLE_SPEEDO;
-          renderIdleSpeedoScreen();
+      try {
+        const res = await fetch(`https://photon.komoot.io/api/?q=${encodeURIComponent(query)}&limit=4`);
+        const data = await res.json();
+        const resultsBox = document.getElementById("searchResults");
+        resultsBox.innerHTML = "";
+        if (data.features && data.features.length > 0) {
+          resultsBox.style.display = "block";
+          data.features.forEach(f => {
+            const name = f.properties.name || f.properties.street || "Location";
+            const city = f.properties.city || f.properties.state || "";
+            const div = document.createElement("div");
+            div.className = "search-item";
+            div.innerText = `${name}, ${city}`;
+            div.onclick = () => {
+              const coords = f.geometry.coordinates;
+              calculateOsrmRoute(coords[1], coords[0]);
+              resultsBox.style.display = "none";
+            };
+            resultsBox.appendChild(div);
+          });
         }
+      } catch (err) {
+        console.warn("Geocoding error:", err);
       }
     }
-    return;
-  }
 
-  if (input.startsWith("GYRO,")) {
-    int idx1 = input.indexOf(',', 5);
-    int idx2 = input.indexOf(',', idx1 + 1);
-    int idx3 = input.indexOf(',', idx2 + 1);
-
-    if (idx1 > 0 && idx2 > 0 && idx3 > 0) {
-      currentLeanAngle = input.substring(5, idx1).toInt();
-      maxLeanLeft      = input.substring(idx1 + 1, idx2).toInt();
-      maxLeanRight     = input.substring(idx2 + 1, idx3).toInt();
-      lateralG         = input.substring(idx3 + 1).toFloat();
-    }
-    return;
-  }
-
-  if (input.startsWith("BRI,")) {
-    int bri = input.substring(4).toInt();
-    setDisplayBrightness(bri);
-    return;
-  }
-
-  if (input.startsWith("RST,TRIP")) {
-    tripOdoKm = 0.0f;
-    prefs.putFloat("tripOdo", tripOdoKm);
-    if (currentState == STATE_DEDICATED_ODO) renderDedicatedOdoScreen();
-    return;
-  }
-
-  if (input.startsWith("ODO,")) {
-    float deltaKm = input.substring(4).toFloat() / 1000.0f;
-    if (deltaKm > 0.0f && deltaKm < 1.0f) {
-      tripOdoKm += deltaKm;
-      totalBikeOdoKm += deltaKm;
-    }
-    return;
-  }
-
-  if (input.startsWith("SUM,")) {
-    int idx1 = input.indexOf(',', 4);
-    int idx2 = input.indexOf(',', idx1 + 1);
-    int idx3 = input.indexOf(',', idx2 + 1);
-    int idx4 = input.indexOf(',', idx3 + 1);
-
-    if (idx1 > 0) {
-      totalTripDist = input.substring(4, idx1).toFloat();
-      tripMinutes   = input.substring(idx1 + 1, idx2).toInt();
-      topSpeedKmh   = input.substring(idx2 + 1, idx3).toInt();
-      avgSpeedKmh   = input.substring(idx3 + 1, idx4).toInt();
-      ambientTemp   = input.substring(idx4 + 1).toInt();
-    }
-
-    routeActive = false;
-    currentState = STATE_TRIP_SUMMARY;
-    stateTimer = millis();
-    renderTripSummaryScreen();
-    return;
-  }
-
-  if (input.startsWith("SPD,")) {
-    int idx1 = input.indexOf(',', 4);
-    int idx2 = input.indexOf(',', idx1 + 1);
-    int idx3 = input.indexOf(',', idx2 + 1);
-    int idx4 = input.indexOf(',', idx3 + 1);
-    int idx5 = input.indexOf(',', idx4 + 1);
-    int idx6 = input.indexOf(',', idx5 + 1);
-
-    if (idx1 > 0) {
-      liveSpeedKmh  = input.substring(4, idx1).toInt();
-      speedLimitKmh = input.substring(idx1 + 1, idx2).toInt();
-      currentHour   = input.substring(idx2 + 1, idx3).toInt();
-      currentMinute = input.substring(idx3 + 1, idx4).toInt();
-      isNightTheme  = (input.substring(idx4 + 1, idx5).toInt() == 1);
-      ambientTemp   = input.substring(idx5 + 1, idx6).toInt();
-      rainAlert     = (input.substring(idx6 + 1).toInt() == 1);
-    }
-    routeActive = false;
-    return;
-  }
-
-  if (!input.startsWith("NAV,")) return;
-
-  int tokens[12];
-  int count = 0;
-  int lastIdx = 3;
-  while (count < 12) {
-    int nextComma = input.indexOf(',', lastIdx + 1);
-    if (nextComma < 0) break;
-    tokens[count++] = nextComma;
-    lastIdx = nextComma;
-  }
-
-  if (count >= 7) {
-    currentTurnType     = (TurnType)input.substring(4, tokens[0]).toInt();
-    currentDistance     = input.substring(tokens[0] + 1, tokens[1]).toInt();
-    stepInitialDistance = input.substring(tokens[1] + 1, tokens[2]).toInt();
-    remainingTripDist   = input.substring(tokens[2] + 1, tokens[3]).toFloat();
-    totalTripDist       = input.substring(tokens[3] + 1, tokens[4]).toFloat();
-    currentHour         = input.substring(tokens[4] + 1, tokens[5]).toInt();
-    currentMinute       = input.substring(tokens[5] + 1, tokens[6]).toInt();
-
-    if (count >= 12) {
-      isNightTheme  = (input.substring(tokens[6] + 1, tokens[7]).toInt() == 1);
-      liveSpeedKmh  = input.substring(tokens[7] + 1, tokens[8]).toInt();
-      speedLimitKmh = input.substring(tokens[8] + 1, tokens[9]).toInt();
-      ambientTemp   = input.substring(tokens[9] + 1, tokens[10]).toInt();
-      rainAlert     = (input.substring(tokens[10] + 1, tokens[11]).toInt() == 1);
-      String road   = input.substring(tokens[11] + 1);
-      road.toCharArray(currentRoadName, sizeof(currentRoadName));
-    } else {
-      String road = input.substring(tokens[6] + 1);
-      road.toCharArray(currentRoadName, sizeof(currentRoadName));
-    }
-
-    routeActive = true;
-    lastNavPacketTime = millis();
-  }
-}
-
-class ServerCallbacks : public BLEServerCallbacks {
-  void onConnect(BLEServer* pServer) { bleConnected = true; }
-  void onDisconnect(BLEServer* pServer) {
-    bleConnected = false;
-    routeActive = false;
-    spotifyPlaying = false;
-    BLEDevice::startAdvertising();
-  }
-};
-
-class NavDataCallbacks : public BLECharacteristicCallbacks {
-  void onWrite(BLECharacteristic *pCharacteristic) {
-    String rxValue = pCharacteristic->getValue().c_str();
-    if (rxValue.length() > 0) {
-      parseNavPacket(rxValue);
-    }
-  }
-};
-
-void setupBLE() {
-  BLEDevice::init("Tripper");
-
-  BLEServer *pServer = BLEDevice::createServer();
-  pServer->setCallbacks(new ServerCallbacks());
-
-  BLEService *pNavService = pServer->createService(TRIPPER_SERVICE_UUID);
-  BLECharacteristic *pNavChar = pNavService->createCharacteristic(
-    TRIPPER_CHAR_UUID,
-    BLECharacteristic::PROPERTY_READ | BLECharacteristic::PROPERTY_WRITE
-  );
-  pNavChar->setCallbacks(new NavDataCallbacks());
-  pNavChar->addDescriptor(new BLE2902());
-  pNavService->start();
-
-  BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
-  pAdvertising->addServiceUUID(TRIPPER_SERVICE_UUID);
-  pAdvertising->setScanResponse(true);
-  pAdvertising->setMinPreferred(0x06);
-  pAdvertising->setMinPreferred(0x12);
-  BLEDevice::startAdvertising();
-}
-
-void manageStateMachine() {
-  unsigned long now = millis();
-
-  if (now - lastOdoSaveTime >= 60000) {
-    lastOdoSaveTime = now;
-    prefs.putFloat("tripOdo", tripOdoKm);
-    prefs.putFloat("totalOdo", totalBikeOdoKm);
-  }
-
-  switch (currentState) {
-    case STATE_BOOT_WELCOME:
-      if (now - stateTimer >= 4000) {
-        currentState = STATE_BOOT_HELMET;
-        stateTimer = now;
-        renderHelmetScreen();
+    async function calculateOsrmRoute(destLat, destLon) {
+      if (!lastPosition) {
+        alert("Waiting for GPS position...");
+        return;
       }
-      break;
+      const url = `https://router.project-osrm.org/route/v1/driving/${lastPosition.lon},${lastPosition.lat};${destLon},${destLat}?overview=full&geometries=geojson&steps=true`;
+      try {
+        const res = await fetch(url);
+        const data = await res.json();
+        if (data.routes && data.routes.length > 0) {
+          const route = data.routes[0];
+          totalTripDistanceMeters = Math.round(route.distance);
+          remainingTripMeters = totalTripDistanceMeters;
 
-    case STATE_BOOT_HELMET:
-      if (now - stateTimer >= 4000) {
-        currentState = STATE_IDLE_SPEEDO;
-        stateTimer = now;
-        screenRotateTimer = now;
-        renderIdleSpeedoScreen();
+          routeSteps = route.legs[0].steps;
+          currentStepIndex = 0;
+          parseCurrentStep();
+
+          if (routePolyline) map.removeLayer(routePolyline);
+          const latLngs = route.geometry.coordinates.map(c => [c[1], c[0]]);
+          routePolyline = L.polyline(latLngs, { color: '#00e5ff', weight: 5 }).addTo(map);
+          map.fitBounds(routePolyline.getBounds());
+        }
+      } catch (e) {
+        console.error("OSRM Route Error:", e);
       }
-      break;
+    }
 
-    case STATE_IDLE_SPEEDO:
-      if (routeActive) {
-        currentState = STATE_NAV_ACTIVE;
-        renderPrimaryNavScreen();
-      } else if (spotifyPlaying && spotifyTitle.length() > 0 && spotifyTitle != "Not Playing") {
-        currentState = STATE_SPOTIFY_MODE;
-        drawSpotifyScreen();
+    function parseCurrentStep() {
+      if (currentStepIndex >= routeSteps.length) {
+        routeSteps = [];
+        return;
+      }
+      const step = routeSteps[currentStepIndex];
+      stepDistMeters = Math.round(step.distance);
+      currentRoadName = (step.name || "Ride Safe").replace(/,/g, ' ').substring(0, 22);
+      
+      const modifier = (step.maneuver && step.maneuver.modifier) || "";
+      const type = (step.maneuver && step.maneuver.type) || "";
+
+      if (type.includes("roundabout")) currentTurnCode = 4;
+      else if (modifier.includes("u-turn")) currentTurnCode = 3;
+      else if (modifier.includes("left")) currentTurnCode = 1;
+      else if (modifier.includes("right")) currentTurnCode = 2;
+      else currentTurnCode = 0;
+    }
+
+    // ============================================================
+    // GPS, SPEED & DISTANCE COVERED TRACKING
+    // ============================================================
+    if ("geolocation" in navigator) {
+      navigator.geolocation.watchPosition(
+        (pos) => {
+          const lat = pos.coords.latitude;
+          const lon = pos.coords.longitude;
+          const nowTs = pos.timestamp || Date.now();
+
+          if (!userMarker) {
+            userMarker = L.circleMarker([lat, lon], { color: '#d80000', radius: 8 }).addTo(map);
+          } else {
+            userMarker.setLatLng([lat, lon]);
+          }
+
+          let calculatedSpeedKmh = 0;
+          if (pos.coords.speed !== null && !isNaN(pos.coords.speed) && pos.coords.speed >= 0) {
+            calculatedSpeedKmh = Math.round(pos.coords.speed * 3.6);
+          } else if (lastPosition && lastGpsTimestamp) {
+            const timeDeltaSec = (nowTs - lastGpsTimestamp) / 1000;
+            const distM = calculateDistanceMeters(lastPosition.lat, lastPosition.lon, lat, lon);
+            if (timeDeltaSec > 0.4 && timeDeltaSec < 6.0 && distM > 1.5) {
+              calculatedSpeedKmh = Math.round((distM / timeDeltaSec) * 3.6);
+            }
+          }
+
+          currentSpeedKmh = calculatedSpeedKmh;
+          if (currentSpeedKmh > maxSpeedKmh) maxSpeedKmh = currentSpeedKmh;
+          speedSum += currentSpeedKmh;
+          speedSamples++;
+
+          if (lastPosition) {
+            const distDelta = calculateDistanceMeters(lastPosition.lat, lastPosition.lon, lat, lon);
+            if (distDelta > 2 && distDelta < 500) {
+              distanceCoveredMeters += distDelta;
+              sendBlePacket(`ODO,${Math.round(distDelta)}\n`);
+              if (routeSteps.length > 0) {
+                stepDistMeters = Math.max(0, stepDistMeters - Math.round(distDelta));
+                remainingTripMeters = Math.max(0, remainingTripMeters - Math.round(distDelta));
+                if (stepDistMeters <= 15) {
+                  currentStepIndex++;
+                  parseCurrentStep();
+                }
+              }
+            }
+          }
+
+          lastPosition = { lat, lon };
+          lastGpsTimestamp = nowTs;
+          document.getElementById("telemStatus").innerText = `Speed: ${currentSpeedKmh} km/h | Lean: ${currentLeanAngle}°`;
+          document.getElementById("distCoveredStatus").innerText = `${(distanceCoveredMeters / 1000).toFixed(1)} km`;
+        },
+        (err) => console.warn(err),
+        { enableHighAccuracy: true, maximumAge: 500, timeout: 10000 }
+      );
+    }
+
+    function calculateDistanceMeters(lat1, lon1, lat2, lon2) {
+      const R = 6371e3;
+      const phi1 = lat1 * Math.PI / 180;
+      const phi2 = lat2 * Math.PI / 180;
+      const dPhi = (lat2 - lat1) * Math.PI / 180;
+      const dLambda = (lon2 - lon1) * Math.PI / 180;
+      const a = Math.sin(dPhi / 2) * Math.sin(dPhi / 2) +
+                Math.cos(phi1) * Math.cos(phi2) *
+                Math.sin(dLambda / 2) * Math.sin(dLambda / 2);
+      return R * (2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a)));
+    }
+
+    // ============================================================
+    // GYROSCOPE LEAN ANGLE TRACKING
+    // ============================================================
+    if (window.DeviceOrientationEvent) {
+      window.addEventListener('deviceorientation', (e) => {
+        let roll = e.gamma || 0;
+        currentLeanAngle = Math.round(roll);
+        if (currentLeanAngle < 0 && Math.abs(currentLeanAngle) > maxLeanLeft) maxLeanLeft = Math.abs(currentLeanAngle);
+        else if (currentLeanAngle > 0 && currentLeanAngle > maxLeanRight) maxLeanRight = currentLeanAngle;
+      });
+    }
+
+    setInterval(() => {
+      if (!bleCharacteristic) return;
+      const lateralG = (Math.sin(currentLeanAngle * Math.PI / 180)).toFixed(2);
+      sendBlePacket(`GYRO,${currentLeanAngle},${maxLeanLeft},${maxLeanRight},${lateralG}\n`);
+    }, 120);
+
+    // ============================================================
+    // WEATHER TELEMETRY
+    // ============================================================
+    async function updateWeather() {
+      if (!lastPosition) return;
+      try {
+        const res = await fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lastPosition.lat}&longitude=${lastPosition.lon}&current=temperature_2m,weather_code&timezone=auto`);
+        const data = await res.json();
+        if (data && data.current) {
+          ambientTempC = Math.round(data.current.temperature_2m);
+          const code = data.current.weather_code;
+          rainAlert = (code >= 51 && code <= 82) ? 1 : 0;
+        }
+      } catch (e) {
+        console.warn("Weather error:", e);
+      }
+    }
+    setInterval(updateWeather, 600000);
+
+    // ============================================================
+    // PERIODIC NAV & SPEED DISPATCH
+    // ============================================================
+    setInterval(() => {
+      if (!bleCharacteristic) return;
+
+      const now = new Date();
+      const hour = now.getHours();
+      const min = now.getMinutes();
+      const isNight = (hour >= 18 || hour < 6) ? 1 : 0;
+
+      if (routeSteps.length > 0) {
+        const remTripKm = (remainingTripMeters / 1000).toFixed(1);
+        const totalTripKm = (totalTripDistanceMeters / 1000).toFixed(1);
+        const packet = `NAV,${currentTurnCode},${stepDistMeters},${stepDistMeters},${remTripKm},${totalTripKm},${hour},${min},${isNight},${currentSpeedKmh},${speedLimitKmh},${ambientTempC},${rainAlert},${currentRoadName}\n`;
+        sendBlePacket(packet);
       } else {
-        static unsigned long lastSpeedoDraw = 0;
-        if (now - lastSpeedoDraw > 500) {
-          lastSpeedoDraw = now;
-          renderIdleSpeedoScreen();
+        const packet = `SPD,${currentSpeedKmh},${speedLimitKmh},${hour},${min},${isNight},${ambientTempC},${rainAlert}\n`;
+        sendBlePacket(packet);
+      }
+    }, 1000);
+
+    function finishTripAndSendSummary() {
+      const tripMin = Math.round((Date.now() - tripStartTime) / 60000);
+      const avgSpd = speedSamples > 0 ? Math.round(speedSum / speedSamples) : 0;
+      const totalKm = (distanceCoveredMeters / 1000).toFixed(1);
+      sendBlePacket(`SUM,${totalKm},${tripMin},${maxSpeedKmh},${avgSpd},${ambientTempC}\n`);
+      routeSteps = [];
+      if (routePolyline) map.removeLayer(routePolyline);
+    }
+
+    // ============================================================
+    // SPOTIFY PKCE & REALTIME POLLING
+    // ============================================================
+    function generateRandomString(length) {
+      const p = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+      return crypto.getRandomValues(new Uint8Array(length)).reduce((acc, x) => acc + p[x % p.length], "");
+    }
+
+    async function sha256(plain) {
+      return window.crypto.subtle.digest('SHA-256', new TextEncoder().encode(plain));
+    }
+
+    function base64encode(input) {
+      return btoa(String.fromCharCode(...new Uint8Array(input)))
+        .replace(/=/g, '').replace(/\+/g, '-').replace(/\//g, '_');
+    }
+
+    async function authorizeSpotify() {
+      const codeVerifier = generateRandomString(64);
+      const hashed = await sha256(codeVerifier);
+      const codeChallenge = base64encode(hashed);
+      localStorage.setItem('spotify_code_verifier', codeVerifier);
+
+      const authUrl = new URL("https://accounts.spotify.com/authorize");
+      authUrl.search = new URLSearchParams({
+        response_type: 'code',
+        client_id: SPOTIFY_CLIENT_ID,
+        scope: SPOTIFY_SCOPES,
+        code_challenge_method: 'S256',
+        code_challenge: codeChallenge,
+        redirect_uri: SPOTIFY_REDIRECT_URI,
+      }).toString();
+
+      window.location.href = authUrl.toString();
+    }
+
+    async function handleSpotifyCallback() {
+      const code = new URLSearchParams(window.location.search).get('code');
+      if (!code) return;
+
+      const codeVerifier = localStorage.getItem('spotify_code_verifier');
+      try {
+        const response = await fetch('https://accounts.spotify.com/api/token', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: new URLSearchParams({
+            client_id: SPOTIFY_CLIENT_ID,
+            grant_type: 'authorization_code',
+            code: code,
+            redirect_uri: SPOTIFY_REDIRECT_URI,
+            code_verifier: codeVerifier,
+          }),
+        });
+
+        const data = await response.json();
+        if (data.access_token) {
+          localStorage.setItem('spotify_access_token', data.access_token);
+          window.history.replaceState({}, document.title, window.location.pathname);
+          updateSpotifyUI(true);
         }
-        if (now - screenRotateTimer >= 8000) {
-          currentState = STATE_DEDICATED_ODO;
-          screenRotateTimer = now;
-          renderDedicatedOdoScreen();
+      } catch (err) {
+        console.error("Token error:", err);
+      }
+    }
+
+    function updateSpotifyUI(linked) {
+      const btn = document.getElementById("spotifyBtn");
+      const status = document.getElementById("spotifyStatus");
+      if (linked) {
+        status.innerText = "Linked";
+        status.style.color = "#34c759";
+        btn.innerText = "Spotify Active";
+        btn.className = "btn btn-disabled";
+        btn.disabled = true;
+      }
+    }
+
+    async function pollSpotify() {
+      const token = localStorage.getItem('spotify_access_token');
+      if (!token) return;
+
+      try {
+        const res = await fetch('https://api.spotify.com/v1/me/player/currently-playing', {
+          headers: { 'Authorization': `Bearer ${token}` }
+        });
+
+        if (res.status === 204) {
+          document.getElementById("spTitle").innerText = "Not Playing";
+          document.getElementById("spArtist").innerText = "Idle";
+          document.getElementById("spProgress").innerText = "--:-- / --:--";
+          if (lastSentSpotifySig !== "idle" && bleCharacteristic) {
+            lastSentSpotifySig = "idle";
+            sendBlePacket("SPOT,0,0,0,Not Playing,Spotify,No Album\n");
+          }
+          return;
         }
-      }
-      break;
 
-    case STATE_DEDICATED_ODO:
-      if (routeActive) {
-        currentState = STATE_NAV_ACTIVE;
-        renderPrimaryNavScreen();
-      } else if (spotifyPlaying && spotifyTitle.length() > 0 && spotifyTitle != "Not Playing") {
-        currentState = STATE_SPOTIFY_MODE;
-        drawSpotifyScreen();
-      } else {
-        if (now - screenRotateTimer >= 4000) {
-          currentState = STATE_IDLE_SPEEDO;
-          screenRotateTimer = now;
-          renderIdleSpeedoScreen();
+        if (res.status === 401) {
+          localStorage.removeItem('spotify_access_token');
+          updateSpotifyUI(false);
+          return;
         }
-      }
-      break;
 
-    case STATE_SPOTIFY_MODE:
-      if (routeActive) {
-        currentState = STATE_NAV_ACTIVE;
-        renderPrimaryNavScreen();
-      } else if (!spotifyPlaying || spotifyTitle.length() == 0 || spotifyTitle == "Not Playing") {
-        currentState = STATE_IDLE_SPEEDO;
-        screenRotateTimer = now;
-        renderIdleSpeedoScreen();
-      } else {
-        if (now - lastSpotifyRender >= 250) {
-          lastSpotifyRender = now;
-          drawSpotifyScreen();
+        const data = await res.json();
+        if (data && data.item) {
+          const isPlaying = data.is_playing ? 1 : 0;
+          const progressSec = Math.floor((data.progress_ms || 0) / 1000);
+          const durationSec = Math.floor((data.item.duration_ms || 0) / 1000);
+
+          const title = data.item.name.replace(/,/g, ' ').substring(0, 24);
+          const artist = data.item.artists.map(a => a.name).join(' & ').replace(/,/g, ' ').substring(0, 24);
+          const album = (data.item.album ? data.item.album.name : "").replace(/,/g, ' ').substring(0, 24);
+
+          document.getElementById("spTitle").innerText = title;
+          document.getElementById("spArtist").innerText = artist;
+          document.getElementById("spProgress").innerText = 
+            `${Math.floor(progressSec/60)}:${(progressSec%60).toString().padStart(2,'0')} / ${Math.floor(durationSec/60)}:${(durationSec%60).toString().padStart(2,'0')} (${isPlaying ? 'Playing' : 'Paused'})`;
+
+          const sig = `${isPlaying}-${title}-${Math.floor(progressSec / 2)}`;
+          if (lastSentSpotifySig !== sig && bleCharacteristic) {
+            lastSentSpotifySig = sig;
+            sendBlePacket(`SPOT,${isPlaying},${progressSec},${durationSec},${title},${artist},${album}\n`);
+          }
         }
+      } catch (err) {
+        console.error("Spotify poll error:", err);
       }
-      break;
+    }
 
-    case STATE_NAV_ACTIVE:
-      if (!routeActive || (now - lastNavPacketTime > 15000)) {
-        routeActive = false;
-        currentState = (spotifyPlaying && spotifyTitle != "Not Playing") ? STATE_SPOTIFY_MODE : STATE_IDLE_SPEEDO;
-        screenRotateTimer = now;
-        if (spotifyPlaying && spotifyTitle != "Not Playing") drawSpotifyScreen(); else renderIdleSpeedoScreen();
-      } else {
-        if (now - lastNavRenderTime >= 250) {
-          lastNavRenderTime = now;
-          renderPrimaryNavScreen();
-        }
-      }
-      break;
-
-    case STATE_MUSIC_POPUP:
-      if (now - musicPopupTimer > 4000) {
-        currentState = routeActive ? STATE_NAV_ACTIVE : ((spotifyPlaying && spotifyTitle != "Not Playing") ? STATE_SPOTIFY_MODE : STATE_IDLE_SPEEDO);
-        if (routeActive) renderPrimaryNavScreen();
-        else if (spotifyPlaying && spotifyTitle != "Not Playing") drawSpotifyScreen();
-        else renderIdleSpeedoScreen();
-      }
-      break;
-
-    case STATE_TRIP_SUMMARY:
-      if (now - stateTimer >= 12000) {
-        currentState = STATE_IDLE_SPEEDO;
-        screenRotateTimer = now;
-        renderIdleSpeedoScreen();
-      }
-      break;
-  }
-}
-
-void setup() {
-  ledcAttach(TFT_BLK, PWM_FREQ, PWM_RESOLUTION);
-  setDisplayBrightness(100);
-
-  Serial.begin(115200);
-  delay(100);
-
-  prefs.begin("tripper_odo", false);
-  tripOdoKm = prefs.getFloat("tripOdo", 0.0f);
-  totalBikeOdoKm = prefs.getFloat("totalOdo", 0.0f);
-
-  output_display->begin();
-  canvas->begin();
-
-  setupBLE();
-
-  stateTimer = millis();
-  currentState = STATE_BOOT_WELCOME;
-  renderWelcomeScreen();
-}
-
-void loop() {
-  if (Serial.available()) {
-    String input = Serial.readStringUntil('\n');
-    parseNavPacket(input);
-  }
-  manageStateMachine();
-  delay(15);
-}
+    window.addEventListener('DOMContentLoaded', () => {
+      handleSpotifyCallback();
+      if (localStorage.getItem('spotify_access_token')) updateSpotifyUI(true);
+      setInterval(pollSpotify, 2000);
+    });
+  </script>
+</body>
+</html>
