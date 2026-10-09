@@ -4,12 +4,10 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
   <title>Hunter 350 Tripper Dashboard</title>
-  
-  <!-- Mapbox GL JS & Directions -->
-  <link href="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.css" rel="stylesheet">
-  <script src="https://api.mapbox.com/mapbox-gl-js/v2.15.0/mapbox-gl.js"></script>
-  <link rel="stylesheet" href="https://api.mapbox.com/mapbox-gl-js/plugins/mapbox-gl-directions/v4.1.1/mapbox-gl-directions.css">
-  <script src="https://api.mapbox.com/mapbox-gl-js/plugins/mapbox-gl-directions/v4.1.1/mapbox-gl-directions.js"></script>
+
+  <!-- Leaflet CSS & JS (Free OSM - No Mapbox Token Required) -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
@@ -20,10 +18,16 @@
     .btn-ble { background: #007aff; color: white; }
     .btn-spotify { background: #1db954; color: white; }
     .btn-summary { background: #ff9500; color: white; }
+    .btn-route { background: #238636; color: white; margin-top: 6px; }
     .btn-disabled { background: #262b36; color: #6e7687; cursor: not-allowed; border: 1px solid #363d4e; }
     .status-row { display: flex; justify-content: space-between; font-size: 0.85rem; padding: 5px 0; border-bottom: 1px solid #212631; }
     .status-val { font-weight: 600; color: #00e5ff; }
-    #map { width: 100%; height: 260px; border-radius: 10px; margin-top: 8px; border: 1px solid #2e3545; }
+    #map { width: 100%; height: 260px; border-radius: 10px; margin-top: 8px; border: 1px solid #2e3545; z-index: 1; }
+    .search-box { display: flex; gap: 6px; margin-top: 6px; }
+    .search-box input { flex: 1; padding: 10px; border-radius: 6px; border: 1px solid #30363d; background: #0d1117; color: #fff; font-size: 0.9rem; }
+    .search-results { background: #161b22; border: 1px solid #30363d; border-radius: 6px; max-height: 120px; overflow-y: auto; margin-top: 4px; display: none; }
+    .search-item { padding: 8px; font-size: 0.85rem; border-bottom: 1px solid #21262d; cursor: pointer; }
+    .search-item:hover { background: #21262d; }
     .slider-container { display: flex; align-items: center; justify-content: space-between; margin-top: 8px; font-size: 0.85rem; }
     .slider { width: 65%; accent-color: #d80000; }
   </style>
@@ -32,7 +36,6 @@
 
   <h1>Hunter 350 Smart Dash</h1>
 
-  <!-- Control & Connection Panel -->
   <div class="card">
     <button id="bleBtn" class="btn btn-ble" onclick="connectBLE()">Connect Hunter Tripper</button>
     <button id="spotifyBtn" class="btn btn-spotify" onclick="authorizeSpotify()">Link Spotify Account</button>
@@ -56,17 +59,18 @@
     </div>
   </div>
 
-  <!-- Map & Navigation Panel -->
   <div class="card">
-    <div style="font-weight: 600; font-size: 0.85rem; color: #8892b0; margin-bottom: 4px;">ROUTE & NAVIGATION</div>
+    <div style="font-weight: 600; font-size: 0.85rem; color: #8892b0;">DESTINATION SEARCH</div>
+    <div class="search-box">
+      <input type="text" id="destInput" placeholder="Search destination (e.g. Bandra, Thane)..." oninput="searchLocation(this.value)">
+    </div>
+    <div id="searchResults" class="search-results"></div>
+
     <div id="map"></div>
     <button class="btn btn-summary" style="margin-top: 10px;" onclick="finishTripAndSendSummary()">End Trip & View Summary</button>
   </div>
 
   <script>
-    // ============================================================
-    // CONFIGURATION
-    // ============================================================
     const SPOTIFY_CLIENT_ID = "853f624535ad4ff3bf665a26c9a7dbbe";
     const SPOTIFY_REDIRECT_URI = window.location.origin + window.location.pathname;
     const SPOTIFY_SCOPES = "user-read-currently-playing user-read-playback-state";
@@ -74,12 +78,9 @@
     const TRIPPER_SERVICE_UUID = "4fafc201-1fb5-459e-8fcc-c5c9c331914b";
     const TRIPPER_CHAR_UUID    = "beb5483e-36e1-4688-b7f5-ea07361b26a8";
 
-    mapboxgl.accessToken = 'pk.eyJ1IjoidGVqYXNzcDIyIiwiYSI6ImNtODFjZjdzNzBmbzIyanFzNmZ3aDcyOG8ifQ.e532b2g4aA35G3HhJ2xR2Q';
-
     let bleDevice = null;
     let bleCharacteristic = null;
 
-    // Telemetry State
     let currentSpeedKmh = 0;
     let maxSpeedKmh = 0;
     let speedSum = 0;
@@ -96,13 +97,14 @@
 
     let totalTripDistanceMeters = 0;
     let lastPosition = null;
+    let lastGpsTimestamp = null;
 
-    // Active Navigation Step
-    let currentStep = null;
-    let stepInitialDistance = 0;
+    let routeSteps = [];
+    let currentStepIndex = 0;
     let remainingTripMeters = 0;
     let currentRoadName = "Ride Safe";
-    let currentTurnCode = 0;
+    let currentTurnCode = 0; // 0=Straight, 1=Left, 2=Right, 3=UTurn, 4=Roundabout
+    let stepDistMeters = 0;
 
     let lastSentSpotifySig = "";
 
@@ -111,7 +113,7 @@
     // ============================================================
     async function connectBLE() {
       try {
-        document.getElementById("bleStatus").innerText = "Pairing...";
+        document.getElementById("bleStatus").innerText = "Searching...";
         bleDevice = await navigator.bluetooth.requestDevice({
           filters: [{ name: "Hunter Tripper" }],
           optionalServices: [TRIPPER_SERVICE_UUID]
@@ -128,7 +130,7 @@
         document.getElementById("bleBtn").className = "btn btn-disabled";
         document.getElementById("bleBtn").disabled = true;
       } catch (err) {
-        console.error("BLE Connect Error:", err);
+        console.error("BLE Error:", err);
         document.getElementById("bleStatus").innerText = "Failed";
         document.getElementById("bleStatus").style.color = "#ff3b30";
       }
@@ -149,7 +151,7 @@
         const encoder = new TextEncoder();
         await bleCharacteristic.writeValue(encoder.encode(packetStr));
       } catch (e) {
-        console.error("BLE Transmit Error:", e);
+        console.error("BLE Send Error:", e);
       }
     }
 
@@ -158,84 +160,148 @@
     }
 
     // ============================================================
-    // MAPBOX NAVIGATION INTEGRATION
+    // LEAFLET MAP & OSRM FREE ROUTING
     // ============================================================
-    const map = new mapboxgl.Map({
-      container: 'map',
-      style: 'mapbox://styles/mapbox/dark-v11',
-      center: [72.8777, 19.0760],
-      zoom: 13
-    });
+    const map = L.map('map').setView([19.0760, 72.8777], 13);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: '© OpenStreetMap'
+    }).addTo(map);
 
-    const directions = new MapboxDirections({
-      accessToken: mapboxgl.accessToken,
-      unit: 'metric',
-      profile: 'mapbox/driving',
-      controls: { instructions: false }
-    });
+    let userMarker = null;
+    let routePolyline = null;
 
-    map.addControl(directions, 'top-left');
-
-    directions.on('route', (e) => {
-      if (e.route && e.route.length > 0) {
-        const route = e.route[0];
-        remainingTripMeters = Math.round(route.distance);
-        if (totalTripDistanceMeters === 0) totalTripDistanceMeters = remainingTripMeters;
-        
-        if (route.legs && route.legs[0] && route.legs[0].steps.length > 0) {
-          updateNavigationStep(route.legs[0].steps[0]);
-        }
+    async function searchLocation(query) {
+      if (query.length < 3) {
+        document.getElementById("searchResults").style.display = "none";
+        return;
       }
-    });
-
-    function mapManeuverToTurnCode(maneuver) {
-      const type = maneuver.type || "";
-      const modifier = maneuver.modifier || "";
-
-      if (type.includes("roundabout")) return 4;
-      if (type.includes("uturn") || modifier.includes("uturn")) return 3;
-      if (modifier.includes("left")) return 1;
-      if (modifier.includes("right")) return 2;
-      return 0;
+      try {
+        const res = await fetch(`https://photon.komoot.io/api/?q=${encodeURIComponent(query)}&limit=4`);
+        const data = await res.json();
+        const resultsBox = document.getElementById("searchResults");
+        resultsBox.innerHTML = "";
+        if (data.features && data.features.length > 0) {
+          resultsBox.style.display = "block";
+          data.features.forEach(f => {
+            const name = f.properties.name || f.properties.street || "Location";
+            const city = f.properties.city || f.properties.state || "";
+            const div = document.createElement("div");
+            div.className = "search-item";
+            div.innerText = `${name}, ${city}`;
+            div.onclick = () => {
+              const coords = f.geometry.coordinates;
+              calculateOsrmRoute(coords[1], coords[0]);
+              resultsBox.style.display = "none";
+            };
+            resultsBox.appendChild(div);
+          });
+        }
+      } catch (err) {
+        console.warn("Geocoding failed:", err);
+      }
     }
 
-    function updateNavigationStep(step) {
-      currentStep = step;
-      stepInitialDistance = Math.round(step.distance);
+    async function calculateOsrmRoute(destLat, destLon) {
+      if (!lastPosition) {
+        alert("Waiting for GPS position...");
+        return;
+      }
+      const url = `https://router.project-osrm.org/route/v1/driving/${lastPosition.lon},${lastPosition.lat};${destLon},${destLat}?overview=full&geometries=geojson&steps=true`;
+      try {
+        const res = await fetch(url);
+        const data = await res.json();
+        if (data.routes && data.routes.length > 0) {
+          const route = data.routes[0];
+          totalTripDistanceMeters = Math.round(route.distance);
+          remainingTripMeters = totalTripDistanceMeters;
+
+          routeSteps = route.legs[0].steps;
+          currentStepIndex = 0;
+          parseCurrentStep();
+
+          if (routePolyline) map.removeLayer(routePolyline);
+          const latLngs = route.geometry.coordinates.map(c => [c[1], c[0]]);
+          routePolyline = L.polyline(latLngs, { color: '#00e5ff', weight: 5 }).addTo(map);
+          map.fitBounds(routePolyline.getBounds());
+        }
+      } catch (e) {
+        console.error("OSRM Route Error:", e);
+      }
+    }
+
+    function parseCurrentStep() {
+      if (currentStepIndex >= routeSteps.length) {
+        routeSteps = [];
+        return;
+      }
+      const step = routeSteps[currentStepIndex];
+      stepDistMeters = Math.round(step.distance);
       currentRoadName = (step.name || "Ride Safe").replace(/,/g, ' ').substring(0, 22);
-      currentTurnCode = mapManeuverToTurnCode(step.maneuver);
+      
+      const modifier = (step.maneuver && step.maneuver.modifier) || "";
+      const type = (step.maneuver && step.maneuver.type) || "";
+
+      if (type.includes("roundabout")) currentTurnCode = 4;
+      else if (modifier.includes("u-turn")) currentTurnCode = 3;
+      else if (modifier.includes("left")) currentTurnCode = 1;
+      else if (modifier.includes("right")) currentTurnCode = 2;
+      else currentTurnCode = 0;
     }
 
     // ============================================================
-    // GPS & ODOMETER TRACKING
+    // GPS & SPEED ENGINE
     // ============================================================
     if ("geolocation" in navigator) {
       navigator.geolocation.watchPosition(
         (pos) => {
           const lat = pos.coords.latitude;
           const lon = pos.coords.longitude;
-          const speed = pos.coords.speed ? Math.round(pos.coords.speed * 3.6) : 0;
-          currentSpeedKmh = speed;
+          const nowTs = pos.timestamp || Date.now();
 
-          if (speed > maxSpeedKmh) maxSpeedKmh = speed;
-          speedSum += speed;
+          if (!userMarker) {
+            userMarker = L.circleMarker([lat, lon], { color: '#d80000', radius: 8 }).addTo(map);
+          } else {
+            userMarker.setLatLng([lat, lon]);
+          }
+
+          let calculatedSpeedKmh = 0;
+          if (pos.coords.speed !== null && !isNaN(pos.coords.speed) && pos.coords.speed >= 0) {
+            calculatedSpeedKmh = Math.round(pos.coords.speed * 3.6);
+          } else if (lastPosition && lastGpsTimestamp) {
+            const timeDeltaSec = (nowTs - lastGpsTimestamp) / 1000;
+            const distM = calculateDistanceMeters(lastPosition.lat, lastPosition.lon, lat, lon);
+            if (timeDeltaSec > 0.4 && timeDeltaSec < 6.0 && distM > 1.5) {
+              calculatedSpeedKmh = Math.round((distM / timeDeltaSec) * 3.6);
+            }
+          }
+
+          currentSpeedKmh = calculatedSpeedKmh;
+          if (currentSpeedKmh > maxSpeedKmh) maxSpeedKmh = currentSpeedKmh;
+          speedSum += currentSpeedKmh;
           speedSamples++;
 
           if (lastPosition) {
             const distDelta = calculateDistanceMeters(lastPosition.lat, lastPosition.lon, lat, lon);
             if (distDelta > 2 && distDelta < 500) {
               sendBlePacket(`ODO,${Math.round(distDelta)}\n`);
-              if (currentStep) {
-                stepInitialDistance = Math.max(0, stepInitialDistance - Math.round(distDelta));
+              if (routeSteps.length > 0) {
+                stepDistMeters = Math.max(0, stepDistMeters - Math.round(distDelta));
                 remainingTripMeters = Math.max(0, remainingTripMeters - Math.round(distDelta));
+                if (stepDistMeters <= 15) {
+                  currentStepIndex++;
+                  parseCurrentStep();
+                }
               }
             }
           }
+
           lastPosition = { lat, lon };
-          updateTelemetryUI();
+          lastGpsTimestamp = nowTs;
+          document.getElementById("telemStatus").innerText = `Speed: ${currentSpeedKmh} km/h | Lean: ${currentLeanAngle}°`;
         },
-        (err) => console.warn("GPS Warning:", err),
-        { enableHighAccuracy: true, maximumAge: 1000 }
+        (err) => console.warn(err),
+        { enableHighAccuracy: true, maximumAge: 500, timeout: 10000 }
       );
     }
 
@@ -252,18 +318,14 @@
     }
 
     // ============================================================
-    // GYROSCOPE LEAN ANGLE TRACKING
+    // GYRO LEAN ANGLE TRACKING
     // ============================================================
     if (window.DeviceOrientationEvent) {
-      window.addEventListener('deviceorientation', (event) => {
-        let roll = event.gamma || 0;
+      window.addEventListener('deviceorientation', (e) => {
+        let roll = e.gamma || 0;
         currentLeanAngle = Math.round(roll);
-
-        if (currentLeanAngle < 0 && Math.abs(currentLeanAngle) > maxLeanLeft) {
-          maxLeanLeft = Math.abs(currentLeanAngle);
-        } else if (currentLeanAngle > 0 && currentLeanAngle > maxLeanRight) {
-          maxLeanRight = currentLeanAngle;
-        }
+        if (currentLeanAngle < 0 && Math.abs(currentLeanAngle) > maxLeanLeft) maxLeanLeft = Math.abs(currentLeanAngle);
+        else if (currentLeanAngle > 0 && currentLeanAngle > maxLeanRight) maxLeanRight = currentLeanAngle;
       });
     }
 
@@ -287,13 +349,13 @@
           rainAlert = (code >= 51 && code <= 82) ? 1 : 0;
         }
       } catch (e) {
-        console.warn("Weather fetch error:", e);
+        console.warn("Weather error:", e);
       }
     }
     setInterval(updateWeather, 600000);
 
     // ============================================================
-    // CONTINUOUS NAV & SPEED DISPATCH LOOP
+    // PACKET DISPATCH LOOP (NAV vs SPD)
     // ============================================================
     setInterval(() => {
       if (!bleCharacteristic) return;
@@ -303,10 +365,10 @@
       const min = now.getMinutes();
       const isNight = (hour >= 18 || hour < 6) ? 1 : 0;
 
-      if (currentStep) {
+      if (routeSteps.length > 0) {
         const remTripKm = (remainingTripMeters / 1000).toFixed(1);
         const totalTripKm = (totalTripDistanceMeters / 1000).toFixed(1);
-        const packet = `NAV,${currentTurnCode},${stepInitialDistance},${stepInitialDistance},${remTripKm},${totalTripKm},${hour},${min},${isNight},${currentSpeedKmh},${speedLimitKmh},${ambientTempC},${rainAlert},${currentRoadName}\n`;
+        const packet = `NAV,${currentTurnCode},${stepDistMeters},${stepDistMeters},${remTripKm},${totalTripKm},${hour},${min},${isNight},${currentSpeedKmh},${speedLimitKmh},${ambientTempC},${rainAlert},${currentRoadName}\n`;
         sendBlePacket(packet);
       } else {
         const packet = `SPD,${currentSpeedKmh},${speedLimitKmh},${hour},${min},${isNight},${ambientTempC},${rainAlert}\n`;
@@ -318,28 +380,21 @@
       const tripMin = Math.round((Date.now() - tripStartTime) / 60000);
       const avgSpd = speedSamples > 0 ? Math.round(speedSum / speedSamples) : 0;
       const totalKm = (totalTripDistanceMeters / 1000).toFixed(1);
-
       sendBlePacket(`SUM,${totalKm},${tripMin},${maxSpeedKmh},${avgSpd},${ambientTempC}\n`);
-      currentStep = null;
-    }
-
-    function updateTelemetryUI() {
-      document.getElementById("telemStatus").innerText = `Speed: ${currentSpeedKmh} km/h | Lean: ${currentLeanAngle}°`;
+      routeSteps = [];
+      if (routePolyline) map.removeLayer(routePolyline);
     }
 
     // ============================================================
-    // SPOTIFY PKCE OAUTH & REALTIME TELEMETRY
+    // SPOTIFY PKCE & REALTIME POLLING
     // ============================================================
     function generateRandomString(length) {
-      const possible = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
-      const values = crypto.getRandomValues(new Uint8Array(length));
-      return values.reduce((acc, x) => acc + possible[x % possible.length], "");
+      const p = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789';
+      return crypto.getRandomValues(new Uint8Array(length)).reduce((acc, x) => acc + p[x % p.length], "");
     }
 
     async function sha256(plain) {
-      const encoder = new TextEncoder();
-      const data = encoder.encode(plain);
-      return window.crypto.subtle.digest('SHA-256', data);
+      return window.crypto.subtle.digest('SHA-256', new TextEncoder().encode(plain));
     }
 
     function base64encode(input) {
@@ -351,7 +406,6 @@
       const codeVerifier = generateRandomString(64);
       const hashed = await sha256(codeVerifier);
       const codeChallenge = base64encode(hashed);
-
       localStorage.setItem('spotify_code_verifier', codeVerifier);
 
       const authUrl = new URL("https://accounts.spotify.com/authorize");
@@ -368,8 +422,7 @@
     }
 
     async function handleSpotifyCallback() {
-      const urlParams = new URLSearchParams(window.location.search);
-      const code = urlParams.get('code');
+      const code = new URLSearchParams(window.location.search).get('code');
       if (!code) return;
 
       const codeVerifier = localStorage.getItem('spotify_code_verifier');
@@ -389,12 +442,11 @@
         const data = await response.json();
         if (data.access_token) {
           localStorage.setItem('spotify_access_token', data.access_token);
-          if (data.refresh_token) localStorage.setItem('spotify_refresh_token', data.refresh_token);
           window.history.replaceState({}, document.title, window.location.pathname);
           updateSpotifyUI(true);
         }
       } catch (err) {
-        console.error("Token Exchange Error:", err);
+        console.error("Token error:", err);
       }
     }
 
@@ -407,9 +459,6 @@
         btn.innerText = "Spotify Active";
         btn.className = "btn btn-disabled";
         btn.disabled = true;
-      } else {
-        status.innerText = "Unlinked";
-        status.style.color = "#ff3b30";
       }
     }
 
@@ -453,7 +502,7 @@
           }
         }
       } catch (err) {
-        console.error("Spotify Poll Error:", err);
+        console.error("Spotify poll error:", err);
       }
     }
 
